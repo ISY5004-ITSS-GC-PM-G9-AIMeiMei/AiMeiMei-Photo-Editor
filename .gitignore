@@ -1,5 +1,6 @@
 # Ignore the models directory
 PhotoLab/src/models/
+AIFeature/models/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
