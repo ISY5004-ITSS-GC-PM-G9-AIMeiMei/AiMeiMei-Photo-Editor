@@ -6,7 +6,7 @@ from pymatting.alpha.estimate_alpha_cf import estimate_alpha_cf
 from pymatting.foreground.estimate_foreground_ml import estimate_foreground_ml
 from pymatting.util.util import stack_images
 from scipy.ndimage.morphology import binary_erosion
-import moviepy.editor as mpy
+from moviepy.video.io.VideoFileClip import VideoFileClip
 import numpy as np
 import torch
 import torch.nn.functional
@@ -52,8 +52,8 @@ def alpha_matting_cutout(
     size = img.size
 
     # ✅ Fixed: Use Image.LANCZOS instead of Image.ANTIALIAS
-    img.thumbnail((base_size, base_size), Image.LANCZOS)
-    mask = mask.resize(img.size, Image.LANCZOS)
+    img.thumbnail((base_size, base_size), Image.Resampling.LANCZOS)
+    mask = mask.resize(img.size, Image.Resampling.LANCZOS)
 
     img = np.asarray(img)
     mask = np.asarray(mask)
@@ -91,14 +91,14 @@ def alpha_matting_cutout(
 
     cutout = np.clip(cutout * 255, 0, 255).astype(np.uint8)
     cutout = Image.fromarray(cutout)
-    cutout = cutout.resize(size, Image.LANCZOS)  # ✅ Fixed: Use Image.LANCZOS
+    cutout = cutout.resize(size, Image.Resampling.LANCZOS)  # ✅ Fixed: Use Image.LANCZOS
 
     return cutout
 
 
 def naive_cutout(img, mask):
     empty = Image.new("RGBA", (img.size), 0)
-    cutout = Image.composite(img, empty, mask.resize(img.size, Image.LANCZOS))  # ✅ Fixed
+    cutout = Image.composite(img, empty, mask.resize(img.size, Image.Resampling.LANCZOS))  # ✅ Fixed
     return cutout
 
 
@@ -182,7 +182,7 @@ def remove2(
 
 
 def iter_frames(path):
-    return mpy.VideoFileClip(path).resize(height=320).iter_frames(dtype="uint8")
+    return VideoFileClip(path).resized(height=320).iter_frames(dtype="uint8")
 
 
 @torch.no_grad()
