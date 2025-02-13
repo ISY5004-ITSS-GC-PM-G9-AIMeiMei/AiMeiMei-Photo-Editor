@@ -1,6 +1,4 @@
-import cv2
 import numpy as np
-import os
 import re
 
 class InsufficientImagesError(Exception):
