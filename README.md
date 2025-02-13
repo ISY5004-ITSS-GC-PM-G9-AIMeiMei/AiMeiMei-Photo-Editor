@@ -40,11 +40,31 @@ export QT_PLUGIN_PATH="/Users/liqi/anaconda3/lib/python3.12/site-packages/PyQt6/
 
 After all these steps, try rerun the "python src/main.py" in your terminal.
 
+##UI TODO
+
+1. Selection Tool & Magic Wand-like Function
+Implement a basic selection tool and a magic wand-like function to select objects within an image.
+The selection tool should allow users to move, rotate, and scale the selected object.
+High precision is not required, as AI will handle auto-selection in the future.
+Ensure that the selection tool provides basic usability and interaction.
+
+2. Layer Management
+Provide basic layer functionality, including adding, removing, flatten layer
+
+3. Main Toolbar for File Operations
+Add a main toolbar with essential file operations:
+Open File (Ctrl + O)
+Save File (Ctrl + S)
+Undo Action (Ctrl + Z)
+Ensure that these shortcut keys function correctly.
+
 ## Features
 - NIMA Score (Need to Impleemnt)
 - Instagram Filters
 - Super-Resolution
 - Human Segmentation (Need to Intergrate)
 - Inpainting (Need to Implement)
+
+
 
 
