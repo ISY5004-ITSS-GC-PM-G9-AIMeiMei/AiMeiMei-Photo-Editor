@@ -1,5 +1,7 @@
 
 ## Quick Start
+models link
+https://nusu-my.sharepoint.com/personal/e1330352_u_nus_edu/Documents/Forms/All.aspx?RootFolder=%2Fpersonal%2Fe1330352%5Fu%5Fnus%5Fedu%2FDocuments%2FISY5004%20Practice%20Module%2FModels%2Fmodels&FolderCTID=0x0120009F0412ECCE1BA747B6FEF808642CE9C5&View=%7B6D635FE0%2D2222%2D41BF%2DAD8A%2DA505EE1B97A8%7D
 
 Download the requirements file first inside the PhotoLab, and also download some extra packages:
 Python 3.12
