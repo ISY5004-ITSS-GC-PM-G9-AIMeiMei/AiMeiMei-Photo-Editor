@@ -541,7 +541,7 @@ class Gui(QtWidgets.QMainWindow):
             self.InstagramFiltersToolButton,
             self.WhiteBalanceToolButton,
             self.PortraitModeBackgroundBlurToolButton,
-           self.SuperResolutionToolButton, 
+           self.SuperResolutionToolButton,
         ]
 
         for button in self.ToolButtons:

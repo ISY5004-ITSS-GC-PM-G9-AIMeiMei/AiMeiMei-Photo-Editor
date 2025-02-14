@@ -103,7 +103,7 @@ def download_images(image_urls, uploaded_image_path, save_folder="similar_images
             print(f"❌ Skipping image {img_url} after 3 failed attempts.")
 
 # Example Usage
-uploaded_image = "test/800px-Singapore_Merlion_BCT.jpg"
+uploaded_image = "test/2_people_together.jpg"
 similar_images = get_similar_images(uploaded_image)
 
 if similar_images:
