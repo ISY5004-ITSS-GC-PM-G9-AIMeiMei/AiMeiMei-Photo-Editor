@@ -1,129 +1,116 @@
 import os
 import cv2
-import onnxruntime as ort
 import numpy as np
-import requests
+import onnxruntime as ort
 
-def check_onnx_runtime():
-    """Check ONNX Runtime device and fallback to CPU if GPU is unavailable."""
-    try:
-        device = ort.get_device()
-        print(f"ONNX Runtime is using: {device}")
-        return device
-    except Exception as e:
-        print(f"Error checking ONNX Runtime: {e}. Defaulting to CPU.")
-        return "CPU"
-
-
-def load_image(image_path):
-    """Load an image from a file path."""
-    if not os.path.exists(image_path):
-        raise FileNotFoundError(f"Error: Image file '{image_path}' not found.")
-    image = cv2.imread(image_path)
-    if image is None:
-        raise ValueError("Error: Failed to load the image. Please check the file path and format.")
-    return image
-
-
-def preprocess_image(image, target_size=(320, 320)):
-    """Resize and normalize image for U²-Net model."""
-    original_size = (image.shape[1], image.shape[0])  # (width, height)
-    image_resized = cv2.resize(image, target_size)  # Resize to 320x320 for U²-Net
-    image_normalized = image_resized.astype(np.float32) / 255.0  # Normalize to [0,1]
-    image_transposed = np.transpose(image_normalized, (2, 0, 1))  # Convert to (C, H, W)
-    image_input = np.expand_dims(image_transposed, axis=0)  # Add batch dimension
-    return image_input, original_size
-
-
-def download_u2net(model_dir="models/"):
-    """Download the U²-Net model to the specified directory if not already present."""
-    model_path = os.path.join(model_dir, "u2net.onnx")
+# ===============================
+# 1️⃣ Load ONNX Model
+# ===============================
+def load_onnx_model(model_path):
+    """Loads an ONNX model for U²-Net segmentation."""
     if not os.path.exists(model_path):
-        os.makedirs(model_dir, exist_ok=True)
-        print("Downloading U²-Net model...")
-        url = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx"
-        response = requests.get(url, stream=True)
-        with open(model_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=1024):
-                if chunk:
-                    f.write(chunk)
-        print("U²-Net model downloaded successfully!")
-    return model_path
+        raise FileNotFoundError(f"ONNX model not found: {model_path}")
+    return ort.InferenceSession(model_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
 
+# ===============================
+# 2️⃣ Image Preprocessing
+# ===============================
+def preprocess_image(image):
+    """Prepares an image for U²-Net by resizing, normalizing, and adding batch dimension."""
+    image = cv2.resize(image, (320, 320))  # Resize to model input size
+    image = image.astype(np.float32) / 255.0  # Normalize pixel values (0 to 1)
+    image = np.transpose(image, (2, 0, 1))  # Change format to (C, H, W)
+    return np.expand_dims(image, axis=0)  # Add batch dimension
 
-def initialize_u2net(model_dir="models/"):
-    """Initialize the U²-Net model with ONNX Runtime."""
-    model_path = download_u2net(model_dir)
-    device = check_onnx_runtime()
+# ===============================
+# 3️⃣ Post-processing with Edge Refinement
+# ===============================
+def refine_mask(mask, original_size):
+    """Applies Gaussian blur, morphological operations, and adaptive feathering to smooth edges."""
+    mask = cv2.resize(mask, original_size, interpolation=cv2.INTER_LINEAR)
+    mask = (mask * 255).astype(np.uint8)  # Convert from float (0 to 1) to uint8 (0 to 255)
 
-    print("Initializing U²-Net model...")
-    try:
-        providers = ["CUDAExecutionProvider"] if device == "GPU" else ["CPUExecutionProvider"]
-        session = ort.InferenceSession(model_path, providers=providers)
-        print(f"U²-Net initialized successfully on {device}")
-    except Exception as e:
-        print(f"Error initializing U²-Net: {e}. Using CPU instead.")
-        session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+    # Apply Gaussian Blur to soften edges
+    mask = cv2.GaussianBlur(mask, (7, 7), 0)
 
-    return session
+    # Morphological operations: Erosion (removes halo) then Dilation (restores size)
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.erode(mask, kernel, iterations=2)
+    mask = cv2.dilate(mask, kernel, iterations=2)
 
+    # Normalize for better alpha channel blending
+    return cv2.normalize(mask, None, 0, 255, cv2.NORM_MINMAX)
 
-def run_inference(image, session):
-    """Run ONNX model inference on the input image."""
+# ===============================
+# 4️⃣ Segmentation Process
+# ===============================
+def segment_image(image_path, model_path, output_dir):
+    """Runs U²-Net segmentation on an image, removes background, and saves results."""
+
+    # Load ONNX Model
+    session = load_onnx_model(model_path)
+
+    # Load image
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"Image file '{image_path}' not found.")
+
+    image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+    if image is None:
+        raise ValueError("Error: Failed to load the image.")
+
+    # Extract original size & filename
+    original_size = (image.shape[1], image.shape[0])
+    file_name = os.path.splitext(os.path.basename(image_path))[0]  # Extract name without extension
+
+    # Convert to RGBA if not already
+    if image.shape[2] == 3:
+        image_rgba = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
+    else:
+        image_rgba = image.copy()
+
+    # Preprocess image for ONNX model
+    input_tensor = preprocess_image(image)
+
+    # Run ONNX inference
     input_name = session.get_inputs()[0].name
     output_name = session.get_outputs()[0].name
-    output = session.run([output_name], {input_name: image})[0]  # Run inference
-    return output.squeeze(0)  # Remove batch dimension
+    output = session.run([output_name], {input_name: input_tensor})[0]
 
+    # Refine segmentation mask for smoother edges
+    segmentation_mask = refine_mask(output[0, 0, :, :], original_size)
 
-def postprocess_mask(mask, original_size):
-    """Post-process model output mask to binary format."""
-    mask_resized = cv2.resize(mask[0], original_size)  # Resize to original image size
-    mask_binary = (mask_resized > 0.5).astype(np.uint8) * 255  # Convert to binary mask
-    return mask_binary
+    # Apply mask as alpha channel
+    alpha_channel = segmentation_mask
 
+    # Create cut-out object (foreground)
+    selected_object = image_rgba.copy()
+    selected_object[:, :, 3] = alpha_channel  # Apply refined mask
 
-def apply_mask(image, mask):
-    """Apply the mask to the original image for transparent background effect."""
-    rgba_image = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)  # Convert to RGBA
-    rgba_image[:, :, 3] = mask  # Apply mask to alpha channel
-    return rgba_image
+    # Create transparent background image
+    background_rgba = image_rgba.copy()
+    background_rgba[alpha_channel > 0] = (0, 0, 0, 0)  # Make subject area transparent
 
+    # Create output directory with the original file name
+    output_folder = os.path.join(output_dir, file_name)
+    os.makedirs(output_folder, exist_ok=True)
 
-def save_images(output_dir, filename, segmented_image, mask):
-    """Save segmented images and mask."""
-    os.makedirs(output_dir, exist_ok=True)
+    # Save results
+    selected_filename = os.path.join(output_folder, f"{file_name}_selected.png")
+    background_filename = os.path.join(output_folder, f"{file_name}_background.png")
 
-    human_filename = os.path.join(output_dir, f"{filename}_human.png")
-    mask_filename = os.path.join(output_dir, f"{filename}_mask.png")
+    cv2.imwrite(selected_filename, selected_object)
+    cv2.imwrite(background_filename, background_rgba)
 
-    cv2.imwrite(human_filename, segmented_image)
-    cv2.imwrite(mask_filename, mask)
+    print(f"✅ Segmentation completed! Files saved in '{output_folder}':\n- {selected_filename}\n- {background_filename}")
 
-    print(f"Saved: {human_filename}")
-    print(f"Saved: {mask_filename}")
-
-
-def run_segmentation():
-    image_path = "test/2_people_together.jpg"  # Change to your image path
-    image = load_image(image_path)
-    image_input, original_size = preprocess_image(image)
-
-    input_filename = os.path.splitext(os.path.basename(image_path))[0]
-    output_root = "segresult"
-    output_dir = os.path.join(output_root, input_filename)
-
-    session = initialize_u2net()
-
-    print("Running U²-Net for segmentation...")
-    mask = run_inference(image_input, session)
-    mask_binary = postprocess_mask(mask, original_size)
-
-    segmented_image = apply_mask(image, mask_binary)
-
-    save_images(output_dir, input_filename, segmented_image, mask_binary)
-    print(f"✅ Segmentation completed! Files saved in: {output_dir}")
-
-
+# ===============================
+# 5️⃣ Run Segmentation
+# ===============================
 if __name__ == "__main__":
-    run_segmentation()
+    # File paths
+    image_path = "images/test/2_people_together.jpg"  # Change to your image path
+    model_path = "models/u2net.onnx"  # Update with your ONNX model path
+    output_directory = "images/segmentation_result"  # Base output directory
+
+    # Run the segmentation pipeline
+    segment_image(image_path, model_path, output_directory)

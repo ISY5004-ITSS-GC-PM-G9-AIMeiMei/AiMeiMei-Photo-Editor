@@ -77,7 +77,7 @@ def fetch_street_view_images(lat, lng, api_key):
         return
 
     location_name = get_location_name(lat, lng, api_key)
-    save_path = f"street_view/{location_name}/"
+    save_path = f"images/google_street_views/{location_name}/"
     os.makedirs(save_path, exist_ok=True)
 
     for pitch in pitch_values:

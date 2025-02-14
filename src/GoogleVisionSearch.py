@@ -72,7 +72,7 @@ def get_image_gps(image_path):
     return None, None
 
 
-def download_images(image_urls, uploaded_image_path, save_folder="similar_images"):
+def download_images(image_urls, uploaded_image_path, save_folder="images/google_similar_images"):
     """Downloads images from given URLs into a folder named after the uploaded file."""
     uploaded_filename = os.path.splitext(os.path.basename(uploaded_image_path))[0]
     image_folder = os.path.join(save_folder, uploaded_filename)
@@ -158,7 +158,7 @@ def get_similar_images(image_path, num_images=30):
 
 
 # Example Usage
-uploaded_image = "test/2_people_together.jpg"
+uploaded_image = "images/test/2_people_together.jpg"
 latitude, longitude = get_image_gps(uploaded_image)
 landmarks = get_landmarks(uploaded_image)
 similar_images = get_similar_images(uploaded_image)

@@ -77,7 +77,7 @@ def recognize_landmarks(image_path):
 
 
 # Example usage
-landmarks = recognize_landmarks("test/2_people_together.jpg")
+landmarks = recognize_landmarks("images/test/2_people_together.jpg")
 
 # Final output
 print("\n=== FINAL OUTPUT ===")
