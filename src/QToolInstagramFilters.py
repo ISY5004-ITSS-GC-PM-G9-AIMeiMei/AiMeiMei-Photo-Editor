@@ -24,7 +24,8 @@ class QToolInstagramFilters(QScrollArea):
 
         image = toolInput.copy()
 
-        image.thumbnail((200, 200), Image.Resampling.LANCZOS)
+        # ✅ Updated to Pillow 10.2.0: Use Image.LANCZOS instead of Image.ANTIALIAS
+        image.thumbnail((200, 200), Image.LANCZOS)
 
         import pilgram
         filters = [

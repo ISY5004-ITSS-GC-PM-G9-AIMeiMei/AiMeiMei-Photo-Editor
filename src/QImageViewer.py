@@ -2,12 +2,14 @@
 """
 
 import os.path
-
+import copy
+import cv2
+import math
 from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtCore import Qt, QRect, QRectF, QPoint, QPointF, pyqtSignal, QEvent, QSize
-from PyQt6.QtGui import QImage, QPixmap, QPainterPath, QMouseEvent, QPainter, QPen
+from PyQt6.QtCore import Qt, QRect, QRectF, QPoint, QPointF, pyqtSignal, QEvent, QSize,QSizeF
+from PyQt6.QtGui import QImage, QPixmap, QPainterPath, QMouseEvent, QPainter, QPen, QColor, QBrush, QTransform
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QFileDialog, QSizePolicy, \
-    QGraphicsItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsLineItem, QGraphicsPolygonItem
+    QGraphicsItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsLineItem, QGraphicsPolygonItem, QGraphicsPixmapItem
 
 # numpy is optional: only needed if you want to display numpy 2d arrays as images.
 try:
@@ -31,6 +33,29 @@ from QCropItem import QCropItem
 import random
 from PIL import Image, ImageFilter, ImageDraw
 from PIL.ImageQt import ImageQt
+
+from PIL import Image
+import torch
+from segment_anything import SamPredictor, SamAutomaticMaskGenerator, sam_model_registry
+
+# ---------------------------------------------------------------------------
+# Adjust SAM auto mask generator parameters for better performance
+# ---------------------------------------------------------------------------
+SAM_CHECKPOINT = "models/sam_vit_h_4b8939.pth"  # Update path if needed
+MODEL_TYPE = "vit_h"  # Options: "vit_h", "vit_b", "vit_l"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+sam_model = sam_model_registry[MODEL_TYPE](checkpoint=SAM_CHECKPOINT)
+sam_model.to(DEVICE)
+predictor = SamPredictor(sam_model)
+
+auto_mask_generator = SamAutomaticMaskGenerator(
+    sam_model,
+    points_per_side=64,          # More points yield finer details
+    pred_iou_thresh=0.80,        # Lower threshold yields more candidate masks
+    stability_score_thresh=0.90, # Filter out unstable masks
+    min_mask_region_area=500     # Skip very small masks
+)
 
 class QtImageViewer(QGraphicsView):
     """ PyQt image viewer widget based on QGraphicsView with mouse zooming/panning and ROIs.
@@ -95,12 +120,34 @@ class QtImageViewer(QGraphicsView):
         
         self.parent = parent
 
+        self._isRectangleSelectPreseed =  False
         # Image is displayed as a QPixmap in a QGraphicsScene attached to this QGraphicsView.
         self.scene = QGraphicsScene()
         self.setScene(self.scene)
+        self.main_pixmap_item = None
+        self.original_pixmap = None
+        self.background_pixmap = None  # Backup of the image (used initially)
+        self.selected_pixmap_item = None
+        self.selection_feedback_item = None  # For drawing the final outline
+        self.dragging = False
 
-        # Better quality pixmap scaling?
-        # self.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        # Modes: "selection" (prompt-based), "auto" (auto-based), "transform" (move/scale)
+        self.mode = "selection"
+
+        # For prompt-based mode: store positive/negative points
+        self.positive_points = []  # Left-click adds a positive point
+        self.negative_points = []  # Right-click adds a negative point
+
+        # We'll always merge selections into one union mask.
+        self.auto_selection_mask = None  # numpy array (uint8) with 0 or 255 values
+        self.image_shape = None  # (height, width)
+
+        # Toggle for morphological post-processing (smoothing edges)
+        self.use_morphology = True
+
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
 
         # Displayed image pixmap in the QGraphicsScene.
         self._current_filename = None
@@ -219,9 +266,264 @@ class QtImageViewer(QGraphicsView):
         self.checkerBoard = None
         self.checkerBoardWidth = 0
         self.checkerBoardHeight = 0
+        self.layerListDock = None
 
+    def set_mode(self, mode):
+        self.mode = mode
+        self._isRectangleSelectPreseed = True
+        print(f"Mode set to: {mode}")
+        self.clearImage()
+        self.load_image(self._current_filename)
+        # Clear prompt points if leaving prompt-based mode.
+        if mode != "selection":
+            self.positive_points = []
+            self.negative_points = []
+    # --- Prompt-based selection (always merged into union mask) ---
+
+    def load_image(self, image_path):
+        self.image_path = image_path
+        self.original_pixmap = QPixmap(image_path)
+        self.background_pixmap = QPixmap(image_path)       
+        if self.original_pixmap.isNull():
+            print(f"Error: Could not load image from {image_path}")
+            return
+        
+        img = cv2.imread(image_path)
+        if img is not None:
+            self.image_shape = (img.shape[0], img.shape[1])
+            self.auto_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
+
+        self.main_pixmap_item = QGraphicsPixmapItem(self.original_pixmap)
+        self.scene.addItem(self.main_pixmap_item)
+        self.setSceneRect(self.main_pixmap_item.boundingRect())
+        
+    def ai_salient_object_selection(self):
+        if not self.image_path:
+            print("No image loaded")
+            return
+
+        img = cv2.imread(self.image_path)
+        if img is None:
+            print("Error: Could not load image")
+            return
+
+        image_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        predictor.set_image(image_rgb)
+
+        if not self.positive_points and not self.negative_points:
+            print("No selection points provided")
+            return
+
+        points = []
+        labels = []
+        if self.positive_points:
+            points.extend(self.positive_points)
+            labels.extend([1] * len(self.positive_points))
+        if self.negative_points:
+            points.extend(self.negative_points)
+            labels.extend([0] * len(self.negative_points))
+        points_array = np.array(points)
+        labels_array = np.array(labels)
+
+        masks, scores, logits = predictor.predict(
+            point_coords=points_array,
+            point_labels=labels_array,
+            multimask_output=False
+        )
+
+        mask = masks[0]
+        mask_uint8 = (mask.astype(np.uint8)) * 255
+
+        if self.use_morphology:
+            kernel = np.ones((5, 5), np.uint8)
+            mask_uint8 = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
+
+        # Merge the prompt-based mask into the union mask
+        self.auto_selection_mask = cv2.bitwise_or(self.auto_selection_mask, mask_uint8)
+        print("Automatically merged prompt-based selection into union mask.")
+
+        self.positive_points = []
+        self.negative_points = []
+
+        self.update_auto_selection_display()
+
+    # --- Auto mode: add or remove an object using the auto mask generator ---
+    def auto_salient_object_update(self, click_point, action="add"):
+        if not self.image_path:
+            print("No image loaded")
+            return
+
+        img = cv2.imread(self.image_path)
+        if img is None:
+            print("Error: Could not load image")
+            return
+
+        image_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        masks = auto_mask_generator.generate(image_rgb)
+        if not masks:
+            print("No masks generated")
+            return
+
+        x = int(click_point.x())
+        y = int(click_point.y())
+        selected_mask = None
+        best_area = 0
+
+        for m in masks:
+            seg = m["segmentation"]
+            if seg[y, x]:
+                area = m.get("area", np.sum(seg))
+                if area > best_area:
+                    best_area = area
+                    selected_mask = seg
+
+        if selected_mask is None:
+            selected_mask = max(masks, key=lambda m: m.get("area", np.sum(m["segmentation"])))["segmentation"]
+
+        new_mask = (selected_mask.astype(np.uint8)) * 255
+
+        if self.use_morphology:
+            kernel = np.ones((5, 5), np.uint8)
+            new_mask = cv2.morphologyEx(new_mask, cv2.MORPH_CLOSE, kernel)
+
+        if action == "add":
+            self.auto_selection_mask = cv2.bitwise_or(self.auto_selection_mask, new_mask)
+            print("Added object to selection (auto).")
+        elif action == "remove":
+            inv = cv2.bitwise_not(new_mask)
+            self.auto_selection_mask = cv2.bitwise_and(self.auto_selection_mask, inv)
+            print("Removed object from selection (auto).")
+        else:
+            print("Unknown action")
+
+        self.update_auto_selection_display()
+
+    # --- Update display based on the union mask ---
+    def update_auto_selection_display(self):
+        if self.image_path is None or self.auto_selection_mask is None:
+            return
+
+        img = cv2.imread(self.image_path)
+        if img is None:
+            return
+
+        mask_uint8 = self.auto_selection_mask.copy()
+
+        # Draw a black outline around the union mask
+        contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        path = QPainterPath()
+        for cnt in contours:
+            if len(cnt) > 0:
+                cnt = cnt.squeeze()
+                if cnt.ndim < 2:
+                    continue
+                start = cnt[0]
+                path.moveTo(start[0], start[1])
+                for pt in cnt[1:]:
+                    path.lineTo(pt[0], pt[1])
+                path.closeSubpath()
+        if self.selection_feedback_item:
+            self.scene.removeItem(self.selection_feedback_item)
+        self.selection_feedback_item = self.scene.addPath(path, QPen(QColor("black"), 2))
+
+        # Create an overlay pixmap from the union mask
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img_rgba = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2RGBA)
+        img_rgba[:, :, 3] = mask_uint8
+        result = cv2.bitwise_and(img_rgba, img_rgba, mask=mask_uint8)
+
+        h, w, ch = result.shape
+        bytes_per_line = ch * w
+        q_img = QImage(result.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+        selected_pixmap = QPixmap.fromImage(q_img)
+
+        if self.selected_pixmap_item:
+            self.scene.removeItem(self.selected_pixmap_item)
+        self.selected_pixmap_item = QGraphicsPixmapItem(selected_pixmap)
+        self.scene.addItem(self.selected_pixmap_item)
+
+        # Update main image: show transparency where selection exists
+        img_rgba[:, :, 3] = cv2.bitwise_not(mask_uint8)
+        q_img_main = QImage(img_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+        self.original_pixmap = QPixmap.fromImage(q_img_main)
+        self.main_pixmap_item.setPixmap(self.original_pixmap)
+    
         # Reference to dock widget that shows layer list
         self.layerListDock = None
+
+    def apply_merge(self):
+        """Merge the moved/modified selected object onto the current displayed image."""
+        if not self.main_pixmap_item:
+            print("No current image available.")
+            return
+        if not self.selected_pixmap_item:
+            print("No selected object to merge.")
+            return
+
+        # Use the current main pixmap (current state) as the base for merging.
+        composite_image = self.main_pixmap_item.pixmap().toImage()
+
+        painter = QPainter(composite_image)
+        selected_pixmap = self.selected_pixmap_item.pixmap()
+        pos = self.selected_pixmap_item.pos()  # Position of the moved object
+
+        # Draw the selected object onto the composite image.
+        painter.drawPixmap(int(pos.x()), int(pos.y()), selected_pixmap)
+        painter.end()
+
+        # Update the main image with the merged composite.
+        merged_pixmap = QPixmap.fromImage(composite_image)
+        self.main_pixmap_item.setPixmap(merged_pixmap)
+
+        # Update the background_pixmap as well if needed.
+        self.background_pixmap = merged_pixmap
+
+        # Clear the selection overlays.
+        if self.selected_pixmap_item:
+            self.scene.removeItem(self.selected_pixmap_item)
+            self.selected_pixmap_item = None
+        if self.selection_feedback_item:
+            self.scene.removeItem(self.selection_feedback_item)
+            self.selection_feedback_item = None
+
+        # Reset the union mask.
+        self.auto_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
+        print("Merge applied: selection merged into current image.")
+    
+    def deSelectRectangle(self,value):     
+        self._isRectangleSelectPreseed = value 
+        self.reset_image()
+        if self.main_pixmap_item:   
+            self.scene.removeItem(self.main_pixmap_item)
+            self.main_pixmap_item.setParentItem(None)  # Detach from parent
+            self.main_pixmap_item.deleteLater()  # Mark for deletion
+            self.main_pixmap_item = None  # Avoid accessing a deleted object
+            self.original_pixmap = None 
+        if not self.hasImage():
+            pixmap = QPixmap.fromImage(QImage(self._current_filename))
+            # Add to layer history            
+            if self.layerListDock:                    # Update the layer button pixmap to the new 
+                self.layerListDock.setButtonPixmap(pixmap)
+                self.addToHistory(pixmap.copy())
+            self._image = self.scene.addPixmap(pixmap)
+            self.setSceneRect(QRectF(pixmap.rect()))  # Set scene size to image size.
+            self.updateViewer()
+            if getattr(self.parent, "UpdateHistogramPlot", None):
+                self.parent.UpdateHistogramPlot()
+            #self.open(self._current_filename)
+
+    def reset_image(self):
+        if self.original_pixmap:
+            self.main_pixmap_item.setPixmap(self.original_pixmap)
+            if self.selected_pixmap_item:
+                self.scene.removeItem(self.selected_pixmap_item)
+            if self.selection_rect:
+                self.scene.removeItem(self.selection_rect)
+            self.selected_pixmap_item = None
+            self.selection_rect = None
+            self.current_rect = None
+            self.dragging = False
+            self.rotating = False
 
     def sizeHint(self):
         return QSize(900, 600)
@@ -234,6 +536,12 @@ class QtImageViewer(QGraphicsView):
     def clearImage(self):
         """ Removes the current image pixmap from the scene if it exists.
         """
+        if self.main_pixmap_item:
+            self.scene.removeItem(self.main_pixmap_item)
+            self.main_pixmap_item = None
+            self.original_pixmap = None
+            self.background_pixmap = None
+
         if self.hasImage():
             self.scene.removeItem(self._image)
             self._image = None
@@ -260,7 +568,8 @@ class QtImageViewer(QGraphicsView):
         if self.hasImage():
             return self._image.pixmap().toImage()
         return None
-
+   
+# Not called 
     def getCurrentLayerPixmapBeforeChangeTo(self, changeName):
         if self.currentLayer in self.layerHistory:
             history = self.layerHistory[self.currentLayer]
@@ -271,7 +580,7 @@ class QtImageViewer(QGraphicsView):
                     return entry["pixmap"]
                 i -= 1
         return None
-
+#called on Undo operation 
     def undoCurrentLayerLatestChange(self):
         if self.currentLayer in self.layerHistory:
             history = self.layerHistory[self.currentLayer]
@@ -666,344 +975,361 @@ class QtImageViewer(QGraphicsView):
     def mousePressEvent(self, event):
         """ Start mouse pan or zoom mode.
         """
-        # Ignore dummy events. e.g., Faking pan with left button ScrollHandDrag.
-        dummyModifiers = Qt.KeyboardModifier(Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier
-                                             | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)
-        if event.modifiers() == dummyModifiers:
-            QGraphicsView.mousePressEvent(self, event)
-            event.accept()
-            return
+        if self._isRectangleSelectPreseed:
+            pos = self.mapToScene(event.pos())
+            if self.mode == "selection":
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self.positive_points.append([pos.x(), pos.y()])
+                    print(f"Added positive point: ({pos.x()}, {pos.y()})")
+                elif event.button() == Qt.MouseButton.RightButton:
+                    self.negative_points.append([pos.x(), pos.y()])
+                    print(f"Added negative point: ({pos.x()}, {pos.y()})")
+                self.ai_salient_object_selection()
+            elif self.mode == "auto":
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self.auto_salient_object_update(pos, action="add")
+                elif event.button() == Qt.MouseButton.RightButton:
+                    self.auto_salient_object_update(pos, action="remove")
+            elif self.mode == "transform" and self.selected_pixmap_item:
+                self.dragging = True
+                self.drag_start = pos
+            super().mousePressEvent(event)
+        else:    
+            # Ignore dummy events. e.g., Faking pan with left button ScrollHandDrag.
+            dummyModifiers = Qt.KeyboardModifier(Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier
+                                                | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)
+            if event.modifiers() == dummyModifiers:
+                QGraphicsView.mousePressEvent(self, event)
+                event.accept()
+                return
 
-        if event.button() == self.regionZoomButton:
-            self._isLeftMouseButtonPressed = True
-
-        # # Draw ROI
-        # if self.drawROI is not None:
-        #     if self.drawROI == "Ellipse":
-        #         # Click and drag to draw ellipse. +Shift for circle.
-        #         pass
-        #     elif self.drawROI == "Rect":
-        #         # Click and drag to draw rectangle. +Shift for square.
-        #         pass
-        #     elif self.drawROI == "Line":
-        #         # Click and drag to draw line.
-        #         pass
-        #     elif self.drawROI == "Polygon":
-        #         # Click to add points to polygon. Double-click to close polygon.
-        #         pass
-
-        if self._isColorPicking:
-            self.performColorPick(event)
-        elif self._isPainting:
-            if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
-                self.performPaint(event)
-        elif self._isErasing:
-            if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
-                self.performErase(event)
-        elif self._isFilling:
-            if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
-                self.performFill(event)
-        elif self._isSelectingRect:
-            if not self._isSelectingRectStarted:
+            if event.button() == self.regionZoomButton:
+                self._isLeftMouseButtonPressed = True
+           
+            if self._isColorPicking:
+                self.performColorPick(event)
+            elif self._isPainting:
+                if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
+                    self.performPaint(event)
+            elif self._isErasing:
+                if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
+                    self.performErase(event)
+            elif self._isFilling:
+                if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
+                    self.performFill(event)           
+            elif self._isSelectingPath:
+                # TODO: https://stackoverflow.com/questions/63568214/qpainter-delete-previously-drawn-shapes
+                #
+                #
                 # Start dragging a region crop box?
                 if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
-                    self._isSelectingRectStarted = True
-                    
+                    self._pixelPosition = event.pos()  # store pixel position
+                    self.selectPoints.append(QPointF(self.mapToScene(event.pos())))
+                    QGraphicsView.mousePressEvent(self, event)
+                    self.buildPath()
+                    event.accept()
+                    return
+            elif self._isRemovingSpots:
+                if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
+                    if not self._targetSelected:
+                        # Target selected
+
+                        # Save the target position
+                        self._targetPos = self.mapToScene(event.pos())
+                        self._targetPos = (int(self._targetPos.x()), int(self._targetPos.y()))
+                        # Set toggle
+                        self._targetSelected = True
+                        self.showSpotRemovalResultAtMousePosition(event)
+                    else:
+                        self.removeSpots(event)
+            elif self._isBlurring:
+                if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
+                    self.blur(event)
+            else:
+                # Zoom
+                # Start dragging a region zoom box?
+                if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
                     self._pixelPosition = event.pos()  # store pixel position
                     self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
                     QGraphicsView.mousePressEvent(self, event)
                     event.accept()
+                    self._isZooming = True
                     return
-            else:
-                event.ignore()
-        elif self._isSelectingPath:
-            # TODO: https://stackoverflow.com/questions/63568214/qpainter-delete-previously-drawn-shapes
-            #
-            #
-            # Start dragging a region crop box?
-            if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
-                self._pixelPosition = event.pos()  # store pixel position
-                self.selectPoints.append(QPointF(self.mapToScene(event.pos())))
-                QGraphicsView.mousePressEvent(self, event)
-                self.buildPath()
-                event.accept()
-                return
-        elif self._isRemovingSpots:
-            if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
-                if not self._targetSelected:
-                    # Target selected
 
-                    # Save the target position
-                    self._targetPos = self.mapToScene(event.pos())
-                    self._targetPos = (int(self._targetPos.x()), int(self._targetPos.y()))
-                    # Set toggle
-                    self._targetSelected = True
-                    self.showSpotRemovalResultAtMousePosition(event)
+                if (self.zoomOutButton is not None) and (event.button() == self.zoomOutButton):
+                    if len(self.zoomStack):
+                        self.zoomStack.pop()
+                        self.updateViewer()
+                        self.viewChanged.emit()
+                    event.accept()
+                    return
+
+            # Start dragging to pan?
+            if (self.panButton is not None) and (event.button() == self.panButton):
+                self._pixelPosition = event.pos()  # store pixel position
+                self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+                if self.panButton == Qt.MouseButton.LeftButton:
+                    QGraphicsView.mousePressEvent(self, event)
                 else:
-                    self.removeSpots(event)
-        elif self._isBlurring:
-            if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
-                self.blur(event)
-        else:
-            # Zoom
-            # Start dragging a region zoom box?
-            if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
-                self._pixelPosition = event.pos()  # store pixel position
-                self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
-                QGraphicsView.mousePressEvent(self, event)
+                    # ScrollHandDrag ONLY works with LeftButton, so fake it.
+                    # Use a bunch of dummy modifiers to notify that event should NOT be handled as usual.
+                    self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                    dummyModifiers = Qt.KeyboardModifier(Qt.KeyboardModifier.ShiftModifier
+                                                        | Qt.KeyboardModifier.ControlModifier
+                                                        | Qt.KeyboardModifier.AltModifier
+                                                        | Qt.KeyboardModifier.MetaModifier)
+                    dummyEvent = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(event.pos()), Qt.MouseButton.LeftButton,
+                                            event.buttons(), dummyModifiers)
+                    self.mousePressEvent(dummyEvent)
+                sceneViewport = self.mapToScene(self.viewport().rect()).boundingRect().intersected(self.sceneRect())
+                self._scenePosition = sceneViewport.topLeft()
                 event.accept()
-                self._isZooming = True
+                self._isPanning = True
                 return
 
-            if (self.zoomOutButton is not None) and (event.button() == self.zoomOutButton):
-                if len(self.zoomStack):
-                    self.zoomStack.pop()
-                    self.updateViewer()
-                    self.viewChanged.emit()
-                event.accept()
-                return
+            scenePos = self.mapToScene(event.pos())
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.leftMouseButtonPressed.emit(scenePos.x(), scenePos.y())
+            elif event.button() == Qt.MouseButton.MiddleButton:
+                self.middleMouseButtonPressed.emit(scenePos.x(), scenePos.y())
+            elif event.button() == Qt.MouseButton.RightButton:
+                self.rightMouseButtonPressed.emit(scenePos.x(), scenePos.y())
 
-        # Start dragging to pan?
-        if (self.panButton is not None) and (event.button() == self.panButton):
-            self._pixelPosition = event.pos()  # store pixel position
-            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-            if self.panButton == Qt.MouseButton.LeftButton:
-                QGraphicsView.mousePressEvent(self, event)
-            else:
-                # ScrollHandDrag ONLY works with LeftButton, so fake it.
-                # Use a bunch of dummy modifiers to notify that event should NOT be handled as usual.
-                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
-                dummyModifiers = Qt.KeyboardModifier(Qt.KeyboardModifier.ShiftModifier
-                                                     | Qt.KeyboardModifier.ControlModifier
-                                                     | Qt.KeyboardModifier.AltModifier
-                                                     | Qt.KeyboardModifier.MetaModifier)
-                dummyEvent = QMouseEvent(QEvent.Type.MouseButtonPress, QPointF(event.pos()), Qt.MouseButton.LeftButton,
-                                         event.buttons(), dummyModifiers)
-                self.mousePressEvent(dummyEvent)
-            sceneViewport = self.mapToScene(self.viewport().rect()).boundingRect().intersected(self.sceneRect())
-            self._scenePosition = sceneViewport.topLeft()
-            event.accept()
-            self._isPanning = True
-            return
-
-        scenePos = self.mapToScene(event.pos())
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.leftMouseButtonPressed.emit(scenePos.x(), scenePos.y())
-        elif event.button() == Qt.MouseButton.MiddleButton:
-            self.middleMouseButtonPressed.emit(scenePos.x(), scenePos.y())
-        elif event.button() == Qt.MouseButton.RightButton:
-            self.rightMouseButtonPressed.emit(scenePos.x(), scenePos.y())
-
-        QGraphicsView.mousePressEvent(self, event)
+            QGraphicsView.mousePressEvent(self, event)
 
     def mouseReleaseEvent(self, event):
         """ Stop mouse pan or zoom mode (apply zoom if valid).
         """
-        # Ignore dummy events. e.g., Faking pan with left button ScrollHandDrag.
-        dummyModifiers = Qt.KeyboardModifier(Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier
-                                             | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)
-        if event.modifiers() == dummyModifiers:
-            QGraphicsView.mouseReleaseEvent(self, event)
-            event.accept()
-            return
-
-        if event.button() == self.regionZoomButton:
-            self._isLeftMouseButtonPressed = False
-
-        if self._isSelectingRect:
-            if self._isSelectingRectStarted:
-                # Finish dragging a region crop box?
-                if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
-                    QGraphicsView.mouseReleaseEvent(self, event)
-                    self._selectRect = self.scene.selectionArea().boundingRect().intersected(self.sceneRect())
-                    # Clear current selection area (i.e. rubberband rect).
-                    self.scene.setSelectionArea(QPainterPath())
-                    self.setDragMode(QGraphicsView.DragMode.NoDrag)
-                    # If zoom box is 3x3 screen pixels or smaller, do not zoom and proceed to process as a click release.
-                    zoomPixelWidth = abs(event.pos().x() - self._pixelPosition.x())
-                    zoomPixelHeight = abs(event.pos().y() - self._pixelPosition.y())
-                    if zoomPixelWidth > 3 and zoomPixelHeight > 3:
-                        if self._selectRect.isValid() and (self._selectRect != self.sceneRect()):
-                            # Create a new crop item using user-drawn rectangle
-                            pixmap = self.getCurrentLayerLatestPixmap()
-                            if self._selectRectItem:
-                                self._selectRectItem.setRect(self._selectRect)
-                            else:
-                                self._selectRectItem = QCropItem(self._image, self._selectRect, (pixmap.width(), pixmap.height()))
+        if self._isRectangleSelectPreseed:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.dragging = False
+            super().mouseReleaseEvent(event)
         else:
-            # Finish dragging a region zoom box?
-            if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
+            # Ignore dummy events. e.g., Faking pan with left button ScrollHandDrag.
+            dummyModifiers = Qt.KeyboardModifier(Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier
+                                                | Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.MetaModifier)
+            if event.modifiers() == dummyModifiers:
                 QGraphicsView.mouseReleaseEvent(self, event)
-                zoomRect = self.scene.selectionArea().boundingRect().intersected(self.sceneRect())
-                # Clear current selection area (i.e. rubberband rect).
-                self.scene.setSelectionArea(QPainterPath())
+                event.accept()
+                return
+
+            if event.button() == self.regionZoomButton:
+                self._isLeftMouseButtonPressed = False
+
+            # if self._isSelectingRect:
+            #     if self._isSelectingRectStarted:
+            #         # Finish dragging a region crop box?
+            #         if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
+            #             QGraphicsView.mouseReleaseEvent(self, event)
+            #             self._selectRect = self.scene.selectionArea().boundingRect().intersected(self.sceneRect())
+            #             # Clear current selection area (i.e. rubberband rect).
+            #             self.scene.setSelectionArea(QPainterPath())
+            #             self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            #             # If zoom box is 3x3 screen pixels or smaller, do not zoom and proceed to process as a click release.
+            #             zoomPixelWidth = abs(event.pos().x() - self._pixelPosition.x())
+            #             zoomPixelHeight = abs(event.pos().y() - self._pixelPosition.y())
+            #             if zoomPixelWidth > 3 and zoomPixelHeight > 3:
+            #                 if self._selectRect.isValid() and (self._selectRect != self.sceneRect()):
+            #                     # Create a new crop item using user-drawn rectangle
+            #                     pixmap = self.getCurrentLayerLatestPixmap()
+            #                     if self._selectRectItem:
+            #                         self._selectRectItem.setRect(self._selectRect)
+            #                     else:
+            #                         self._selectRectItem = QCropItem(self._image, self._selectRect, (pixmap.width(), pixmap.height()))
+            # else:
+            #     # Finish dragging a region zoom box?
+            #     if (self.regionZoomButton is not None) and (event.button() == self.regionZoomButton):
+            #         QGraphicsView.mouseReleaseEvent(self, event)
+            #         zoomRect = self.scene.selectionArea().boundingRect().intersected(self.sceneRect())
+            #         # Clear current selection area (i.e. rubberband rect).
+            #         self.scene.setSelectionArea(QPainterPath())
+            #         self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            #         # If zoom box is 3x3 screen pixels or smaller, do not zoom and proceed to process as a click release.
+            #         zoomPixelWidth = abs(event.pos().x() - self._pixelPosition.x())
+            #         zoomPixelHeight = abs(event.pos().y() - self._pixelPosition.y())
+            #         if zoomPixelWidth > 3 and zoomPixelHeight > 3:
+            #             if zoomRect.isValid() and (zoomRect != self.sceneRect()):
+            #                 self.zoomStack.append(zoomRect)
+            #                 self.updateViewer()
+            #                 self.viewChanged.emit()
+            #                 event.accept()
+            #                 self._isZooming = False
+            #                 return
+
+            # Finish panning?
+            if (self.panButton is not None) and (event.button() == self.panButton):
+                if self.panButton == Qt.MouseButton.LeftButton:
+                    QGraphicsView.mouseReleaseEvent(self, event)
+                else:
+                    # ScrollHandDrag ONLY works with LeftButton, so fake it.
+                    # Use a bunch of dummy modifiers to notify that event should NOT be handled as usual.
+                    self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+                    dummyModifiers = Qt.KeyboardModifier(Qt.KeyboardModifier.ShiftModifier
+                                                        | Qt.KeyboardModifier.ControlModifier
+                                                        | Qt.KeyboardModifier.AltModifier
+                                                        | Qt.KeyboardModifier.MetaModifier)
+                    dummyEvent = QMouseEvent(QEvent.Type.MouseButtonRelease, QPointF(event.pos()),
+                                            Qt.MouseButton.LeftButton, event.buttons(), dummyModifiers)
+                    self.mouseReleaseEvent(dummyEvent)
                 self.setDragMode(QGraphicsView.DragMode.NoDrag)
-                # If zoom box is 3x3 screen pixels or smaller, do not zoom and proceed to process as a click release.
-                zoomPixelWidth = abs(event.pos().x() - self._pixelPosition.x())
-                zoomPixelHeight = abs(event.pos().y() - self._pixelPosition.y())
-                if zoomPixelWidth > 3 and zoomPixelHeight > 3:
-                    if zoomRect.isValid() and (zoomRect != self.sceneRect()):
-                        self.zoomStack.append(zoomRect)
-                        self.updateViewer()
-                        self.viewChanged.emit()
-                        event.accept()
-                        self._isZooming = False
-                        return
+                if len(self.zoomStack) > 0:
+                    sceneViewport = self.mapToScene(self.viewport().rect()).boundingRect().intersected(self.sceneRect())
+                    delta = sceneViewport.topLeft() - self._scenePosition
+                    self.zoomStack[-1].translate(delta)
+                    self.zoomStack[-1] = self.zoomStack[-1].intersected(self.sceneRect())
+                    self.viewChanged.emit()
+                event.accept()
+                self._isPanning = False
+                return
 
-        # Finish panning?
-        if (self.panButton is not None) and (event.button() == self.panButton):
-            if self.panButton == Qt.MouseButton.LeftButton:
-                QGraphicsView.mouseReleaseEvent(self, event)
-            else:
-                # ScrollHandDrag ONLY works with LeftButton, so fake it.
-                # Use a bunch of dummy modifiers to notify that event should NOT be handled as usual.
-                self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
-                dummyModifiers = Qt.KeyboardModifier(Qt.KeyboardModifier.ShiftModifier
-                                                     | Qt.KeyboardModifier.ControlModifier
-                                                     | Qt.KeyboardModifier.AltModifier
-                                                     | Qt.KeyboardModifier.MetaModifier)
-                dummyEvent = QMouseEvent(QEvent.Type.MouseButtonRelease, QPointF(event.pos()),
-                                         Qt.MouseButton.LeftButton, event.buttons(), dummyModifiers)
-                self.mouseReleaseEvent(dummyEvent)
-            self.setDragMode(QGraphicsView.DragMode.NoDrag)
-            if len(self.zoomStack) > 0:
-                sceneViewport = self.mapToScene(self.viewport().rect()).boundingRect().intersected(self.sceneRect())
-                delta = sceneViewport.topLeft() - self._scenePosition
-                self.zoomStack[-1].translate(delta)
-                self.zoomStack[-1] = self.zoomStack[-1].intersected(self.sceneRect())
-                self.viewChanged.emit()
-            event.accept()
-            self._isPanning = False
-            return
+            scenePos = self.mapToScene(event.pos())
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.leftMouseButtonReleased.emit(scenePos.x(), scenePos.y())
+            elif event.button() == Qt.MouseButton.MiddleButton:
+                self.middleMouseButtonReleased.emit(scenePos.x(), scenePos.y())
+            elif event.button() == Qt.MouseButton.RightButton:
+                self.rightMouseButtonReleased.emit(scenePos.x(), scenePos.y())
 
-        scenePos = self.mapToScene(event.pos())
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.leftMouseButtonReleased.emit(scenePos.x(), scenePos.y())
-        elif event.button() == Qt.MouseButton.MiddleButton:
-            self.middleMouseButtonReleased.emit(scenePos.x(), scenePos.y())
-        elif event.button() == Qt.MouseButton.RightButton:
-            self.rightMouseButtonReleased.emit(scenePos.x(), scenePos.y())
-
-        QGraphicsView.mouseReleaseEvent(self, event)
-
-    def mouseDoubleClickEvent(self, event):
-        """ Show entire image.
-        """
-        # Zoom out on double click?
-        if (self.zoomOutButton is not None) and (event.button() == self.zoomOutButton):
-            self.clearZoom()
-            event.accept()
-            return
-
-        scenePos = self.mapToScene(event.pos())
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.leftMouseButtonDoubleClicked.emit(scenePos.x(), scenePos.y())
-        elif event.button() == Qt.MouseButton.RightButton:
-            self.rightMouseButtonDoubleClicked.emit(scenePos.x(), scenePos.y())
-
-        QGraphicsView.mouseDoubleClickEvent(self, event)
+            QGraphicsView.mouseReleaseEvent(self, event)
 
     def wheelEvent(self, event):
-        if self.wheelZoomFactor is not None:
-            if self.wheelZoomFactor == 1:
-                return
-            if event.angleDelta().y() < 0:
-                # zoom in
-                if len(self.zoomStack) == 0:
-                    self.zoomStack.append(self.sceneRect())
-                elif len(self.zoomStack) > 1:
-                    del self.zoomStack[:-1]
-                zoomRect = self.zoomStack[-1]
-                center = zoomRect.center()
-                zoomRect.setWidth(zoomRect.width() / self.wheelZoomFactor)
-                zoomRect.setHeight(zoomRect.height() / self.wheelZoomFactor)
-                zoomRect.moveCenter(center)
-                self.zoomStack[-1] = zoomRect.intersected(self.sceneRect())
-                self.updateViewer()
-                self.viewChanged.emit()
-                self.zoomLevel += 1
+            if self._isRectangleSelectPreseed:
+                if self.mode == "transform" and self.selected_pixmap_item:
+                    scale_factor = 1.1 if event.angleDelta().y() > 0 else 0.9
+                    self.selected_pixmap_item.setScale(self.selected_pixmap_item.scale() * scale_factor)
+                super().wheelEvent(event)
             else:
-                # zoom out
-                if len(self.zoomStack) == 0:
-                    # Already fully zoomed out.
+                if self.wheelZoomFactor is not None:
+                    if self.wheelZoomFactor == 1:
+                        return
+                    if event.angleDelta().y() < 0:
+                        # zoom in
+                        if len(self.zoomStack) == 0:
+                            self.zoomStack.append(self.sceneRect())
+                        elif len(self.zoomStack) > 1:
+                            del self.zoomStack[:-1]
+                        zoomRect = self.zoomStack[-1]
+                        center = zoomRect.center()
+                        zoomRect.setWidth(zoomRect.width() / self.wheelZoomFactor)
+                        zoomRect.setHeight(zoomRect.height() / self.wheelZoomFactor)
+                        zoomRect.moveCenter(center)
+                        self.zoomStack[-1] = zoomRect.intersected(self.sceneRect())
+                        self.updateViewer()
+                        self.viewChanged.emit()
+                        self.zoomLevel += 1
+                    else:
+                        # zoom out
+                        if len(self.zoomStack) == 0:
+                            # Already fully zoomed out.
+                            return
+                        if len(self.zoomStack) > 1:
+                            del self.zoomStack[:-1]
+                        zoomRect = self.zoomStack[-1]
+                        center = zoomRect.center()
+                        zoomRect.setWidth(zoomRect.width() * self.wheelZoomFactor)
+                        zoomRect.setHeight(zoomRect.height() * self.wheelZoomFactor)
+                        zoomRect.moveCenter(center)
+                        self.zoomStack[-1] = zoomRect.intersected(self.sceneRect())
+                        if self.zoomStack[-1] == self.sceneRect():
+                            self.zoomStack = []
+                        self.updateViewer()
+                        self.viewChanged.emit()
+                        self.zoomLevel -= 1
+                    event.accept()
                     return
-                if len(self.zoomStack) > 1:
-                    del self.zoomStack[:-1]
-                zoomRect = self.zoomStack[-1]
-                center = zoomRect.center()
-                zoomRect.setWidth(zoomRect.width() * self.wheelZoomFactor)
-                zoomRect.setHeight(zoomRect.height() * self.wheelZoomFactor)
-                zoomRect.moveCenter(center)
-                self.zoomStack[-1] = zoomRect.intersected(self.sceneRect())
-                if self.zoomStack[-1] == self.sceneRect():
-                    self.zoomStack = []
-                self.updateViewer()
-                self.viewChanged.emit()
-                self.zoomLevel -= 1
-            event.accept()
-            return
 
-        QGraphicsView.wheelEvent(self, event)
+            QGraphicsView.wheelEvent(self, event)
 
     def mouseMoveEvent(self, event):
-
+        if self._isRectangleSelectPreseed:
+            pos = self.mapToScene(event.pos())
+            if self.dragging and self.selected_pixmap_item:
+                delta = pos - self.drag_start
+                self.selected_pixmap_item.moveBy(delta.x(), delta.y())
+                self.drag_start = pos
+            super().mouseMoveEvent(event)           
+        else:
         # Emit updated view during panning.
-        if self._isPanning:
-            QGraphicsView.mouseMoveEvent(self, event)
-            if len(self.zoomStack) > 0:
-                sceneViewport = self.mapToScene(self.viewport().rect()).boundingRect().intersected(self.sceneRect())
-                delta = sceneViewport.topLeft() - self._scenePosition
-                self._scenePosition = sceneViewport.topLeft()
-                self.zoomStack[-1].translate(delta)
-                self.zoomStack[-1] = self.zoomStack[-1].intersected(self.sceneRect())
-                self.updateViewer()
-                self.viewChanged.emit()
-        elif self._isPainting:
-            if self.scene:
-                self._lastMousePositionInScene = QPointF(self.mapToScene(event.pos()))
-            self.renderCursorOverlay(self._lastMousePositionInScene, self.paintBrushSize)
-            if self._isLeftMouseButtonPressed:
-                self.performPaint(event)
-        elif self._isErasing:
-            if self.scene:
-                self._lastMousePositionInScene = QPointF(self.mapToScene(event.pos()))
-            self.renderCursorOverlay(self._lastMousePositionInScene, self.eraserBrushSize)
-            if self._isLeftMouseButtonPressed:
-                self.performErase(event)
-        elif self._isFilling:
-            pass
-            # TODO: Change cursor to a paint bucket?
-        elif self._isRemovingSpots:
-            if not self._targetSelected:
-                # Show ROI
-                # Make mouse red
+            if self._isPanning:
+                QGraphicsView.mouseMoveEvent(self, event)
+                if len(self.zoomStack) > 0:
+                    sceneViewport = self.mapToScene(self.viewport().rect()).boundingRect().intersected(self.sceneRect())
+                    delta = sceneViewport.topLeft() - self._scenePosition
+                    self._scenePosition = sceneViewport.topLeft()
+                    self.zoomStack[-1].translate(delta)
+                    self.zoomStack[-1] = self.zoomStack[-1].intersected(self.sceneRect())
+                    self.updateViewer()
+                    self.viewChanged.emit()
+            elif self._isPainting:
                 if self.scene:
                     self._lastMousePositionInScene = QPointF(self.mapToScene(event.pos()))
-                self.renderCursorOverlay(self._lastMousePositionInScene, self.spotsBrushSize)
-            if self._targetSelected:
-                # A target has been selected
-                # Show blemish fix around the mouse position
-                # If the user is happy with the result, they will click again and the fix
-                # will be placed
-                self.showSpotRemovalResultAtMousePosition(event)
-        elif self._isBlurring:
-            if self.scene:
-                self._lastMousePositionInScene = QPointF(self.mapToScene(event.pos()))
-            self.renderCursorOverlay(self._lastMousePositionInScene, self.blurBrushSize)
+                self.renderCursorOverlay(self._lastMousePositionInScene, self.paintBrushSize)
+                if self._isLeftMouseButtonPressed:
+                    self.performPaint(event)
+            elif self._isErasing:
+                if self.scene:
+                    self._lastMousePositionInScene = QPointF(self.mapToScene(event.pos()))
+                self.renderCursorOverlay(self._lastMousePositionInScene, self.eraserBrushSize)
+                if self._isLeftMouseButtonPressed:
+                    self.performErase(event)
+            elif self._isFilling:
+                pass
+                # TODO: Change cursor to a paint bucket?
+            elif self._isRemovingSpots:
+                if not self._targetSelected:
+                    # Show ROI
+                    # Make mouse red
+                    if self.scene:
+                        self._lastMousePositionInScene = QPointF(self.mapToScene(event.pos()))
+                    self.renderCursorOverlay(self._lastMousePositionInScene, self.spotsBrushSize)
+                if self._targetSelected:
+                    # A target has been selected
+                    # Show blemish fix around the mouse position
+                    # If the user is happy with the result, they will click again and the fix
+                    # will be placed
+                    self.showSpotRemovalResultAtMousePosition(event)
+            elif self._isBlurring:
+                if self.scene:
+                    self._lastMousePositionInScene = QPointF(self.mapToScene(event.pos()))
+                self.renderCursorOverlay(self._lastMousePositionInScene, self.blurBrushSize)
 
-        scenePos = self.mapToScene(event.pos())
-        if self.sceneRect().contains(scenePos):
-            # Pixel index offset from pixel center.
-            x = int(round(scenePos.x() - 0.5))
-            y = int(round(scenePos.y() - 0.5))
-            imagePos = QPoint(x, y)
-        else:
-            # Invalid pixel position.
-            imagePos = QPoint(-1, -1)
-        self.mousePositionOnImageChanged.emit(imagePos)
+            scenePos = self.mapToScene(event.pos())
+            if self.sceneRect().contains(scenePos):
+                # Pixel index offset from pixel center.
+                x = int(round(scenePos.x() - 0.5))
+                y = int(round(scenePos.y() - 0.5))
+                imagePos = QPoint(x, y)
+            else:
+                # Invalid pixel position.
+                imagePos = QPoint(-1, -1)
+            self.mousePositionOnImageChanged.emit(imagePos)
 
-        QGraphicsView.mouseMoveEvent(self, event)
+            QGraphicsView.mouseMoveEvent(self, event)
+   
+    def get_transformed_pixmap(self):
+        # Create a new pixmap
+        new_pixmap = QPixmap(self.selected_pixmap_item.pixmap().size())
+        new_pixmap.fill(Qt.GlobalColor.transparent)  # Ensure transparency
 
+        # Create a painter for the new pixmap
+        painter = QPainter(new_pixmap)
+
+        # Set the transform based on the selected item
+        transform = QTransform()
+        transform.translate(self.selected_pixmap_item.pixmap().rect().width() / 2,
+                            self.selected_pixmap_item.pixmap().rect().height() / 2)
+        transform.rotate(self.selected_pixmap_item.rotation())
+        transform.scale(self.selected_pixmap_item.scale(), self.selected_pixmap_item.scale())
+        transform.translate(-self.selected_pixmap_item.pixmap().rect().width() / 2,
+                            -self.selected_pixmap_item.pixmap().rect().height() / 2)
+        painter.setTransform(transform)
+
+        # Draw the original pixmap onto the new pixmap
+        painter.drawPixmap(0, 0, self.selected_pixmap_item.pixmap())
+        painter.end()
+
+        return new_pixmap
+    
     def enterEvent(self, event):
         self.setCursor(Qt.CursorShape.CrossCursor)
 

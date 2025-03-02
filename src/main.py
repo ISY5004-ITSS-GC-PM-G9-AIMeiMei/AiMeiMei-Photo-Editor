@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QStatusBar
 )
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QAction
 import sys
 
 from QImageViewer import QtImageViewer
@@ -124,60 +124,7 @@ class Gui(QtWidgets.QMainWindow):
         self.sliderValueOfChange = None
         self.sliderObjectOfChange = None
 
-        ##############################################################################################
-        ##############################################################################################
-        # Keyboard Shortcuts
-        ##############################################################################################
-        ##############################################################################################
-
-        self.OpenShortcut = QtGui.QShortcut(QKeySequence("Ctrl+O"), self)
-        self.OpenShortcut.activated.connect(self.OnOpen)
-
-        self.PasteShortcut = QtGui.QShortcut(QKeySequence("Ctrl+V"), self)
-        self.PasteShortcut.activated.connect(self.OnPaste)
-
-        self.SaveShortcut = QtGui.QShortcut(QKeySequence("Ctrl+S"), self)
-        self.SaveShortcut.activated.connect(self.OnSaveAs)
-
-        self.SaveAsShortcut = QtGui.QShortcut(QKeySequence("Ctrl+Shift+S"), self)
-        self.SaveAsShortcut.activated.connect(self.OnSaveAs)
-
-        self.UndoShortcut = QtGui.QShortcut(QKeySequence("Ctrl+Z"), self)
-        self.UndoShortcut.activated.connect(self.OnUndo)
-
-        ##############################################################################################
-        ##############################################################################################
-        # Cursor Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.CursorToolButton = QToolButton(self)
-        # self.CursorToolButton.setIconSize(QtCore.QSize(32, 32))
-        self.CursorToolButton.setText("&Cursor")
-        self.CursorToolButton.setToolTip("Cursor")
-        self.setIconPixmapWithColor(self.CursorToolButton, "icons/cursor.svg")
-        self.CursorToolButton.setCheckable(True)
-        self.CursorToolButton.toggled.connect(self.OnCursorToolButton)
-
-        ##############################################################################################
-        ##############################################################################################
-        # Color Picker Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.ColorPickerToolButton = QToolButton(self)
-        self.ColorPickerToolButton.setText("&Color Picker")
-        self.ColorPickerToolButton.setToolTip("Color Picker")
-        self.setIconPixmapWithColor(self.ColorPickerToolButton, "icons/color_picker.svg")
-        self.ColorPickerToolButton.setCheckable(True)
-        self.ColorPickerToolButton.toggled.connect(self.OnColorPickerToolButton)
-
-        ##############################################################################################
-        ##############################################################################################
-        # Paint Tool
-        ##############################################################################################
-        ##############################################################################################
-
+        
         self.PaintToolButton = QToolButton(self)
         self.PaintToolButton.setText("&Paint")
         self.PaintToolButton.setToolTip("Paint")
@@ -187,43 +134,46 @@ class Gui(QtWidgets.QMainWindow):
 
         ##############################################################################################
         ##############################################################################################
-        # Fill Tool
+        # Prompt Selection Mode
         ##############################################################################################
         ##############################################################################################
 
-        self.FillToolButton = QToolButton(self)
-        self.FillToolButton.setText("&Fill")
-        self.FillToolButton.setToolTip("Fill")
-        self.setIconPixmapWithColor(self.FillToolButton, "icons/fill.svg")
-        self.FillToolButton.setCheckable(True)
-        self.FillToolButton.toggled.connect(self.OnFillToolButton)
+        self.promptSelectToolButton = QToolButton(self)
+        self.promptSelectToolButton.setText("&Prompt Selection")
+        self.promptSelectToolButton.setToolTip("Prompt Selection")
+        #self.setIconPixmapWithColor(self.promptSelectToolButton, "")
+        self.promptSelectToolButton.setCheckable(True)
+        self.promptSelectToolButton.toggled.connect(self.OnPromptSelectToolButton)
 
         ##############################################################################################
         ##############################################################################################
-        # Rectangle Select Tool
+        # Auto Selection Mode
         ##############################################################################################
         ##############################################################################################
 
-        self.RectSelectToolButton = QToolButton(self)
-        self.RectSelectToolButton.setText("&Rectangle Select")
-        self.RectSelectToolButton.setToolTip("Rectangle Select")
-        self.setIconPixmapWithColor(self.RectSelectToolButton, "icons/select_rect.svg")
-        self.RectSelectToolButton.setCheckable(True)
-        self.RectSelectToolButton.toggled.connect(self.OnRectSelectToolButton)
+        self.autoSelectToolButton = QToolButton(self)
+        self.autoSelectToolButton.setText("&Auto Selection")
+        self.autoSelectToolButton.setToolTip("Auto Selection")
+        #self.setIconPixmapWithColor(self.autoSelectToolButton, "")
+        self.autoSelectToolButton.setCheckable(True)
+        self.autoSelectToolButton.toggled.connect(self.OnAutoSelectToolButton)
 
+        
         ##############################################################################################
         ##############################################################################################
-        # Path Select Tool
+        # Transform Selection Mode
         ##############################################################################################
         ##############################################################################################
 
-        self.PathSelectToolButton = QToolButton(self)
-        self.PathSelectToolButton.setText("&Path Select")
-        self.PathSelectToolButton.setToolTip("Path Select")
-        self.setIconPixmapWithColor(self.PathSelectToolButton, "icons/select_path.svg")
-        self.PathSelectToolButton.setCheckable(True)
-        self.PathSelectToolButton.toggled.connect(self.OnPathSelectToolButton)
-
+        self.transfromSelectToolButton = QToolButton(self)
+        self.transfromSelectToolButton.setText("&Transform Selection")
+        self.transfromSelectToolButton.setToolTip("Transform Selection")
+        #self.setIconPixmapWithColor(self.autoSelectToolButton, "")
+        self.transfromSelectToolButton.setCheckable(True)
+        self.transfromSelectToolButton.toggled.connect(self.OnTransfromSelectToolButton)
+        
+        
+           
         ##############################################################################################
         ##############################################################################################
         # Crop Tool
@@ -239,111 +189,6 @@ class Gui(QtWidgets.QMainWindow):
 
         self.CropToolShortcut = QtGui.QShortcut(QKeySequence("Ctrl+Shift+Alt+K"), self)
         self.CropToolShortcut.activated.connect(lambda: self.CropToolButton.toggle())
-
-        ##############################################################################################
-        ##############################################################################################
-        # Rotate Left Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.RotateLeftToolButton = QToolButton(self)
-        self.RotateLeftToolButton.setText("&Rotate Left")
-        self.setIconPixmapWithColor(self.RotateLeftToolButton, "icons/rotate_left.svg")
-        self.RotateLeftToolButton.setToolTip("Rotate Left")
-        self.RotateLeftToolButton.setCheckable(True)
-        self.RotateLeftToolButton.toggled.connect(self.OnRotateLeftToolButton)
-
-        ##############################################################################################
-        ##############################################################################################
-        # Rotate Right Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.RotateRightToolButton = QToolButton(self)
-        self.RotateRightToolButton.setText("&Rotate Right")
-        self.setIconPixmapWithColor(self.RotateRightToolButton, "icons/rotate_right.svg")
-        self.RotateRightToolButton.setToolTip("Rotate Right")
-        self.RotateRightToolButton.setCheckable(True)
-        self.RotateRightToolButton.toggled.connect(self.OnRotateRightToolButton)
-
-        ##############################################################################################
-        ##############################################################################################
-        # Horizontal Stack Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.HStackToolButton = QToolButton(self)
-        self.HStackToolButton.setText("&Horizontal Stack")
-        self.setIconPixmapWithColor(self.HStackToolButton, "icons/hstack.svg")
-        self.HStackToolButton.setToolTip("Horizontal Stack")
-        self.HStackToolButton.setCheckable(True)
-        self.HStackToolButton.toggled.connect(self.OnHStackToolButton)
-
-        ##############################################################################################
-        ##############################################################################################
-        # Vertical Stack Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.VStackToolButton = QToolButton(self)
-        self.VStackToolButton.setText("&Vertical Stack")
-        self.setIconPixmapWithColor(self.VStackToolButton, "icons/vstack.svg")
-        self.VStackToolButton.setToolTip("Vertical Stack")
-        self.VStackToolButton.setCheckable(True)
-        self.VStackToolButton.toggled.connect(self.OnVStackToolButton)
-
-
-        ##############################################################################################
-        ##############################################################################################
-        # Flip Left Right Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.FlipLeftRightToolButton = QToolButton(self)
-        self.FlipLeftRightToolButton.setText("&Flip Left-Right")
-        self.setIconPixmapWithColor(self.FlipLeftRightToolButton, "icons/flip_left_right.svg")
-        self.FlipLeftRightToolButton.setToolTip("Flip Left-Right")
-        self.FlipLeftRightToolButton.setCheckable(True)
-        self.FlipLeftRightToolButton.toggled.connect(self.OnFlipLeftRightToolButton)
-
-        ##############################################################################################
-        ##############################################################################################
-        # Flip Top Bottom Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.FlipTopBottomToolButton = QToolButton(self)
-        self.FlipTopBottomToolButton.setText("&Flip Top-Bottom")
-        self.setIconPixmapWithColor(self.FlipTopBottomToolButton, "icons/flip_top_bottom.svg")
-        self.FlipTopBottomToolButton.setToolTip("Flip Top-Bottom")
-        self.FlipTopBottomToolButton.setCheckable(True)
-        self.FlipTopBottomToolButton.toggled.connect(self.OnFlipTopBottomToolButton)
-
-        ##############################################################################################
-        ##############################################################################################
-        # Spot Removal Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.SpotRemovalToolButton = QToolButton(self)
-        self.SpotRemovalToolButton.setText("&Spot Removal")
-        self.SpotRemovalToolButton.setToolTip("Spot Removal")
-        self.setIconPixmapWithColor(self.SpotRemovalToolButton, "icons/spot_removal.svg")
-        self.SpotRemovalToolButton.setCheckable(True)
-        self.SpotRemovalToolButton.toggled.connect(self.OnSpotRemovalToolButton)
-
-        ##############################################################################################
-        ##############################################################################################
-        # Blur Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.BlurToolButton = QToolButton(self)
-        self.BlurToolButton.setText("&Blur")
-        self.BlurToolButton.setToolTip("Blur")
-        self.setIconPixmapWithColor(self.BlurToolButton, "icons/blur.svg")
-        self.BlurToolButton.setCheckable(True)
-        self.BlurToolButton.toggled.connect(self.OnBlurToolButton)
 
         ##############################################################################################
         ##############################################################################################
@@ -387,32 +232,6 @@ class Gui(QtWidgets.QMainWindow):
 
         ##############################################################################################
         ##############################################################################################
-        # Sliders Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.SlidersToolButton = QToolButton(self)
-        self.SlidersToolButton.setText("&Sliders")
-        self.SlidersToolButton.setToolTip("Sliders")
-        self.setIconPixmapWithColor(self.SlidersToolButton, "icons/sliders.svg")
-        self.SlidersToolButton.setCheckable(True)
-        self.SlidersToolButton.toggled.connect(self.OnSlidersToolButton)
-
-        ##############################################################################################
-        ##############################################################################################
-        # Curve Editor Tool
-        ##############################################################################################
-        ##############################################################################################
-
-        self.CurveEditorToolButton = QToolButton(self)
-        self.CurveEditorToolButton.setText("&Curves")
-        self.CurveEditorToolButton.setToolTip("Curves")
-        self.setIconPixmapWithColor(self.CurveEditorToolButton, "icons/curve.svg")
-        self.CurveEditorToolButton.setCheckable(True)
-        self.CurveEditorToolButton.toggled.connect(self.OnCurveEditorToolButton)
-
-        ##############################################################################################
-        ##############################################################################################
         # Instagram Filters Tool
         ##############################################################################################
         ##############################################################################################
@@ -426,71 +245,54 @@ class Gui(QtWidgets.QMainWindow):
 
         ##############################################################################################
         ##############################################################################################
-        # Histogram Viewer Tool
+        # Apply Tranformation
         ##############################################################################################
         ##############################################################################################
 
-        self.HistogramToolButton = QToolButton(self)
-        self.HistogramToolButton.setText("&Histogram")
-        self.HistogramToolButton.setToolTip("Histogram")
-        self.setIconPixmapWithColor(self.HistogramToolButton, "icons/histogram.svg")
-        self.HistogramToolButton.setCheckable(True)
-        self.HistogramToolButton.toggled.connect(self.OnHistogramToolButton)
+        self.ApplyToolButton = QToolButton(self)
+        self.ApplyToolButton.setText("&Apply")
+        self.ApplyToolButton.setToolTip("Apply")
+        self.setIconPixmapWithColor(self.PaintToolButton, "icons/apply.svg")
+        self.ApplyToolButton.setCheckable(True)
+        self.ApplyToolButton.toggled.connect(self.OnApplyToolButton)
 
-        ##############################################################################################
-        ##############################################################################################
         # Toolbar
         ##############################################################################################
         ##############################################################################################
 
-        self.tools = {
-            "cursor": {
-                "tool": "CursorToolButton",
-                "var": '_isCursor'
-            },
-            "color_picker": {
-                "tool": "ColorPickerToolButton",
-                "var": '_isColorPicking'
-            },
-            "histogram": {
-                "tool": "HistogramToolButton",
-                "var": '_isShowingHistogram'
-            },
+        self.tools = {           
             "paint": {
                 "tool": "PaintToolButton",
                 "var": '_isPainting'
-            },
-            "fill": {
-                "tool": "FillToolButton",
-                "var": '_isFilling'
-            },
-            "select_rect": {
-                "tool": "RectSelectToolButton",
+            },           
+            "prompt_select": {
+                "tool": "promptSelectToolButton",
                 "var": '_isSelectingRect',
                 "destructor": 'exitSelectRect'
-            },
-            "select_path": {
-                "tool": "PathSelectToolButton",
-                "var": '_isSelectingPath',
-                "destructor": 'exitSelectPath'
-            },
+            }, 
+            "auto_select": {
+                "tool": "autoSelectToolButton",
+                "var": '_isSelectingRect',
+                "destructor": 'exitSelectRect'
+            },  
+            "transform_select": {
+                "tool": "transfromSelectToolButton",
+                "var": '_isSelectingRect',
+                "destructor": 'exitSelectRect'
+            },          
             "crop": {
                 "tool": "CropToolButton",
                 "var": '_isCropping'
             },
-            "spot_removal": {
-                "tool": "SpotRemovalToolButton",
-                "var": '_isRemovingSpots'
-            },
-            "eraser": {
+           "eraser": {
                 "tool": "EraserToolButton",
                 "var": '_isErasing'
             },
-            "blur": {
-                "tool": "BlurToolButton",
-                "var": '_isBlurring'
+           "instagram_filters": {
+                "tool": "InstagramFiltersToolButton",
+                "var": '_isApplyingFilter'
             },
-            "instagram_filters": {
+             "Apply": {
                 "tool": "InstagramFiltersToolButton",
                 "var": '_isApplyingFilter'
             },
@@ -503,19 +305,14 @@ class Gui(QtWidgets.QMainWindow):
         ToolbarLayout.setSpacing(0)
 
         self.ToolButtons = [
-            self.CursorToolButton, self.ColorPickerToolButton, self.PaintToolButton, self.EraserToolButton,
-            self.FillToolButton, self.RectSelectToolButton, self.PathSelectToolButton, self.CropToolButton,
-            self.SlidersToolButton, self.HistogramToolButton, self.CurveEditorToolButton,
-            self.SpotRemovalToolButton, self.BlurToolButton,
-
-            self.RotateLeftToolButton, self.RotateRightToolButton,
-            self.HStackToolButton, self.VStackToolButton,
-            self.FlipLeftRightToolButton, self.FlipTopBottomToolButton,
-
-
+            self.PaintToolButton, self.EraserToolButton,
+            self.promptSelectToolButton, self.CropToolButton,
             self.InstagramFiltersToolButton,
             self.WhiteBalanceToolButton,
            self.SuperResolutionToolButton,
+           self.ApplyToolButton,
+           self.autoSelectToolButton,
+           self.transfromSelectToolButton
         ]
 
         for button in self.ToolButtons:
@@ -557,6 +354,38 @@ class Gui(QtWidgets.QMainWindow):
         self.sliderWorkers = []
 
         self.resizeDockWidgets()
+        self.createMenu()
+
+    def createMenu(self):
+        menubar = self.menuBar()
+        fileMenu = menubar.addMenu("&File")
+
+        openAction = QAction("&Open File", self)
+        openAction.setShortcut("Ctrl+O")
+        openAction.triggered.connect(self.OnOpen)
+        fileMenu.addAction(openAction)
+
+        saveAction = QAction("&Save File", self)
+        saveAction.setShortcut("Ctrl+S")
+        saveAction.triggered.connect(self.OnSave)
+        fileMenu.addAction(saveAction)
+
+        saveAsAction = QAction("&Save File As", self)
+        saveAsAction.setShortcut("Ctrl+Shift+S")
+        saveAsAction.triggered.connect(self.OnSaveAs)
+        fileMenu.addAction(saveAsAction)
+
+        editMenu = menubar.addMenu("&Edit")
+
+        undoAction = QAction("&Undo", self)
+        undoAction.setShortcut("Ctrl+Z")
+        undoAction.triggered.connect(self.OnUndo)
+        editMenu.addAction(undoAction)
+
+        pasteAction = QAction("&Paste", self)
+        pasteAction.setShortcut("Ctrl+v")
+        pasteAction.triggered.connect(self.OnPaste)
+        editMenu.addAction(undoAction)
 
     def setIconPixmapWithColor(self, button, filename, findColor='black', newColor='white'):
         pixmap = QPixmap(filename)
@@ -873,77 +702,6 @@ class Gui(QtWidgets.QMainWindow):
                                        self.sliderTypeOfChange, self.sliderValueOfChange, self.sliderObjectOfChange)
             self.UpdateHistogramPlot()
 
-    def timerEvent(self, event):
-        self.killTimer(self.timer_id)
-        self.timer_id = -1
-
-        Pixmap = self.image_viewer.getCurrentLayerLatestPixmap()
-        OriginalPixmap = Pixmap.copy()
-
-        # TODO: If a selection is active
-        # Only apply changes to the selected region
-        if self.image_viewer._isSelectingRect:
-            print(self.image_viewer._selectRect)
-            Pixmap = Pixmap.copy(self.image_viewer._selectRect.toRect())
-        elif self.image_viewer._isSelectingPath:
-            Pixmap = self.image_viewer.getSelectedRegionAsPixmap()
-
-        if Pixmap:
-            if self.RedFactor != 100:
-                Pixmap = self.UpdateReds(Pixmap, float(self.RedFactor / 100))
-            if self.GreenFactor != 100:
-                Pixmap = self.UpdateGreens(Pixmap, float(self.GreenFactor / 100))
-            if self.BlueFactor != 100:
-                Pixmap = self.UpdateBlues(Pixmap, float(self.BlueFactor / 100))
-            if self.Temperature != 6000:
-                import AdjustTemperature
-                img = self.QPixmapToImage(Pixmap)
-                import numpy as np
-                import cv2
-                arr = np.asarray(img)
-                b, g, r, a = cv2.split(arr)
-                img = Image.fromarray(np.dstack((b, g, r)))
-
-                def FindClosest(lst, K):
-                    return lst[min(range(len(lst)), key=lambda i: abs(lst[i] - K))]
-
-                img = AdjustTemperature.convert_temp(img, FindClosest(list(AdjustTemperature.kelvin_table.keys()),
-                                                                      self.Temperature))
-                img = np.asarray(img)
-                img = np.dstack((img, a))
-                img = Image.fromarray(img)
-                Pixmap = self.ImageToQPixmap(img)
-            if self.Color != 100:
-                Pixmap = self.EnhanceImage(Pixmap, ImageEnhance.Color, self.Color)
-            if self.Brightness != 100:
-                Pixmap = self.EnhanceImage(Pixmap, ImageEnhance.Brightness, self.Brightness)
-            if self.Contrast != 100:
-                Pixmap = self.EnhanceImage(Pixmap, ImageEnhance.Contrast, self.Contrast)
-            if self.Sharpness != 100:
-                Pixmap = self.EnhanceImage(Pixmap, ImageEnhance.Sharpness, self.Sharpness)
-            if self.GaussianBlurRadius > 0:
-                Pixmap = self.ApplyGaussianBlur(Pixmap, float(self.GaussianBlurRadius / 100))
-
-            if self.image_viewer._isSelectingRect:
-                painter = QtGui.QPainter(OriginalPixmap)
-                selectRect = self.image_viewer._selectRect
-                point = QtCore.QPoint(int(selectRect.x()), int(selectRect.y()))
-                painter.drawPixmap(point, Pixmap)
-                painter.end()
-                Pixmap = OriginalPixmap
-            elif self.image_viewer._isSelectingPath:
-                painter = QtGui.QPainter(OriginalPixmap)
-                painter.drawPixmap(QtCore.QPoint(), Pixmap)
-                painter.end()
-                Pixmap = OriginalPixmap
-
-            self.sliderChangedPixmap = Pixmap
-            self.sliderExplanationOfChange = self.sliderExplanationOfChange
-            self.sliderTypeOfChange = self.sliderTypeOfChange
-            self.sliderValueOfChange = self.sliderValueOfChange
-            self.sliderObjectOfChange = self.sliderObjectOfChange
-            self.sliderChangeSignal.emit()
-
     def RemoveRenderedCursor(self):
         # The cursor overlay is being rendered in the view
         # Remove it
@@ -954,79 +712,10 @@ class Gui(QtWidgets.QMainWindow):
     def InitTool(self):
         self.RemoveRenderedCursor()
 
-    def OnCursorToolButton(self, checked):
-        self.InitTool()
-        self.EnableTool("cursor") if checked else self.DisableTool("cursor")
-
-    def OnColorPickerToolButton(self, checked):
-        if checked:
-            self.InitTool()
-
-            class ColorPickerWidget(QtWidgets.QWidget):
-                def __init__(self, parent, mainWindow):
-                    QtWidgets.QWidget.__init__(self, parent)
-                    self.parent = parent
-                    self.closed = False
-                    self.mainWindow = mainWindow
-
-                def closeEvent(self, event):
-                    self.destroyed.emit()
-                    event.accept()
-                    self.closed = True
-                    self.mainWindow.DisableTool("color_picker")
-
-            self.ColorPickerContent = ColorPickerWidget(None, self)
-            ColorPickerLayout = QtWidgets.QVBoxLayout(self.ColorPickerContent)
-            self.color_picker = QColorPicker(self.ColorPickerContent, rgb=(173, 36, 207))
-            self.image_viewer.ColorPicker = self.color_picker
-            ColorPickerLayout.addWidget(self.color_picker)
-            self.EnableTool("color_picker") if checked else self.DisableTool("color_picker")
-
-            self.ColorPickerContent.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
-            self.ColorPickerContent.show()
-            # Create a local event loop for this widget
-            loop = QtCore.QEventLoop()
-            self.ColorPickerContent.destroyed.connect(loop.quit)
-            loop.exec()  # wait
-        else:
-            self.DisableTool("color_picker")
-            self.ColorPickerContent.hide()
-
-    def OnHistogramToolButton(self, checked):
-        if checked:
-            self.InitTool()
-
-            class HistogrmaWidget(QtWidgets.QWidget):
-                def __init__(self, parent, mainWindow):
-                    QtWidgets.QWidget.__init__(self, parent)
-                    self.parent = parent
-                    self.closed = False
-                    self.mainWindow = mainWindow
-
-                def closeEvent(self, event):
-                    self.destroyed.emit()
-                    event.accept()
-                    self.closed = True
-                    self.mainWindow.DisableTool("histogram")
-
-            if not self.HistogramContent:
-                self.HistogramContent = HistogrmaWidget(None, self)
-                self.HistogramLayout = QtWidgets.QVBoxLayout(self.HistogramContent)
-                self.HistogramLayout.addWidget(self.ImageHistogramPlot)
-                self.HistogramContent.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
-            self.ImageHistogramPlot.show()
-            self.HistogramContent.show()
-            # Create a local event loop for this widget
-            loop = QtCore.QEventLoop()
-            self.HistogramContent.destroyed.connect(loop.quit)
-            loop.exec()  # wait
-        else:
-            self.DisableTool("histogram")
-            self.HistogramContent.hide()
-            # del self.HistogramContent
-            # del self.HistogramLayout
-
     def OnPaintToolButton(self, checked):
+        if  self.image_viewer._isRectangleSelectPreseed:
+            self.image_viewer.clearImage()
+            self.image_viewer.open(self.image_viewer._current_filename)
         if checked:
             self.InitTool()
 
@@ -1060,248 +749,45 @@ class Gui(QtWidgets.QMainWindow):
             self.DisableTool("paint")
             self.PaintContent.hide()
 
-    def OnFillToolButton(self, checked):
-        if checked:
-            self.InitTool()
-
-            class ColorPickerWidget(QtWidgets.QWidget):
-                def __init__(self, parent, mainWindow):
-                    QtWidgets.QWidget.__init__(self, parent)
-                    self.parent = parent
-                    self.closed = False
-                    self.mainWindow = mainWindow
-
-                def closeEvent(self, event):
-                    self.destroyed.emit()
-                    event.accept()
-                    self.closed = True
-                    self.mainWindow.DisableTool("fill")
-
-            self.FillContent = ColorPickerWidget(None, self)
-            ColorPickerLayout = QtWidgets.QVBoxLayout(self.FillContent)
-            self.color_picker = QColorPicker(self.FillContent, rgb=(173, 36, 207))
-            self.image_viewer.ColorPicker = self.color_picker
-            ColorPickerLayout.addWidget(self.color_picker)
-            self.EnableTool("fill") if checked else self.DisableTool("fill")
-
-            self.FillContent.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
-            self.FillContent.show()
-            # Create a local event loop for this widget
-            loop = QtCore.QEventLoop()
-            self.FillContent.destroyed.connect(loop.quit)
-            loop.exec()  # wait
-        else:
-            self.DisableTool("fill")
-            self.FillContent.hide()
-
     def OnCropToolButton(self, checked):
+        if  self.image_viewer._isRectangleSelectPreseed:
+            self.image_viewer.clearImage()
+            self.image_viewer.open(self.image_viewer._current_filename)
+            self.image_viewer._isRectangleSelectPreseed = False
+
         if checked:
             self.InitTool()
-            self.image_viewer._isCropping = True
+            self.image_viewer._isCropping = True    
 
-    def OnRotateLeftToolButton(self, checked):
-        if checked:
+    def OnPromptSelectToolButton(self, checked):
+        if(checked):
+            self.image_viewer.set_mode("selection")
             self.InitTool()
-            pixmap = self.getCurrentLayerLatestPixmap()
-            pil = self.QPixmapToImage(pixmap)
-            pil = pil.rotate(90, expand=True)
-            updatedPixmap = self.ImageToQPixmap(pil)
-            self.image_viewer.setImage(updatedPixmap, True, "Rotate Left", "Tool", None, None)
-        self.RotateLeftToolButton.setChecked(False)
+            self.EnableTool("prompt_select") if checked else self.DisableTool("prompt_select")
+        else:
+            self.image_viewer.set_mode("")
 
-    def OnRotateRightToolButton(self, checked):
-        if checked:
+    def OnAutoSelectToolButton(self, checked):
+        if(checked):
+            self.image_viewer.set_mode("auto")
             self.InitTool()
-            pixmap = self.getCurrentLayerLatestPixmap()
-            pil = self.QPixmapToImage(pixmap)
-            pil = pil.rotate(-90, expand=True)
-            updatedPixmap = self.ImageToQPixmap(pil)
-            self.image_viewer.setImage(updatedPixmap, True, "Rotate Right", "Tool", None, None)
-        self.RotateRightToolButton.setChecked(False)
-
-    def OnHStackToolButton(self, checked):
-        if checked:
+            self.EnableTool("auto_select") if checked else self.DisableTool("auto_select")
+        else:
+            self.image_viewer.set_mode("")
+    
+    def OnTransfromSelectToolButton(self, checked):
+        if(checked):
+            self.image_viewer.set_mode("transform")
             self.InitTool()
-            if self.image_viewer._current_filename:
-
-                pixmap = self.getCurrentLayerLatestPixmap()
-                first = self.QPixmapToImage(pixmap)
-
-                if pixmap:
-
-                    # Open second image
-                    filepath, _ = QFileDialog.getOpenFileName(self, "Open Image")
-                    if len(filepath) and os.path.isfile(filepath):
-                        second = Image.open(filepath)
-
-                        if first.width != second.width or first.height != second.height:
-                            # The two images are of different size
-
-                            # If the two images are not the exact same size
-                            # Ask the user if they want to resize the first or second or leave as is
-                            msgBox = QtWidgets.QMessageBox()
-                            msgBox.setText('First Image is ' + str(first.width) + "x" + str(first.height) + '\n'
-                                                                                                            'Second Image is ' + str(
-                                second.width) + "x" + str(second.height))
-
-                            resizeFirst = QtWidgets.QPushButton('Resize First')
-                            resizeSecond = QtWidgets.QPushButton('Resize Second')
-                            stackAsIs = QtWidgets.QPushButton("Stack As Is")
-                            cancel = QtWidgets.QPushButton('Cancel')
-
-                            for button in [resizeFirst, resizeSecond, stackAsIs, cancel]:
-                                button.setStyleSheet('''
-                                    border: 1px solid;
-                                    background-color: rgb(44, 44, 44);
-                                    height: 30px;
-                                    width: 100px;
-                                ''')
-
-                            msgBox.addButton(resizeFirst, QtWidgets.QMessageBox.ButtonRole.YesRole)
-                            msgBox.addButton(resizeSecond, QtWidgets.QMessageBox.ButtonRole.NoRole)
-                            msgBox.addButton(stackAsIs, QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
-                            msgBox.addButton(cancel, QtWidgets.QMessageBox.ButtonRole.RejectRole)
-                            msgBox.setStyleSheet('''
-                                background-color: rgb(22, 22, 22);
-                            ''')
-                            ret = msgBox.exec()
-
-                            from PIL import ImageOps
-
-                            if ret == 3:
-                                # Cancel operation
-                                self.HStackToolButton.setChecked(False)
-                                return
-                            elif ret == 0:
-                                # Resize first to match the size of second
-                                first = ImageOps.contain(first, (second.width, second.height))
-                            elif ret == 1:
-                                # Resize second to match the size of first
-                                second = ImageOps.contain(second, (first.width, first.height))
-                            elif ret == 2:
-                                # Do nothing
-                                pass
-
-                        # Hstack the two
-                        dst = Image.new('RGBA', (first.width + second.width, first.height))
-                        dst.paste(first, (0, 0))
-                        dst.paste(second, (first.width, 0))
-
-                        # Save result
-                        updatedPixmap = self.ImageToQPixmap(dst)
-                        self.image_viewer.setImage(updatedPixmap, True, "HStack", "Tool", None, None)
-
-        self.HStackToolButton.setChecked(False)
-
-    def OnVStackToolButton(self, checked):
-        if checked:
-            self.InitTool()
-            if self.image_viewer._current_filename:
-
-                pixmap = self.getCurrentLayerLatestPixmap()
-                first = self.QPixmapToImage(pixmap)
-
-                if pixmap:
-
-                    # Open second image
-                    filepath, _ = QFileDialog.getOpenFileName(self, "Open Image")
-                    if len(filepath) and os.path.isfile(filepath):
-                        second = Image.open(filepath)
-
-                        if first.width != second.width or first.height != second.height:
-                            # The two images are of different size
-
-                            # If the two images are not the exact same size
-                            # Ask the user if they want to resize the first or second or leave as is
-                            msgBox = QtWidgets.QMessageBox()
-                            msgBox.setText('First Image is ' + str(first.width) + "x" + str(first.height) + '\n'
-                                                                                                            'Second Image is ' + str(
-                                second.width) + "x" + str(second.height))
-
-                            resizeFirst = QtWidgets.QPushButton('Resize First')
-                            resizeSecond = QtWidgets.QPushButton('Resize Second')
-                            stackAsIs = QtWidgets.QPushButton("Stack As Is")
-                            cancel = QtWidgets.QPushButton('Cancel')
-
-                            for button in [resizeFirst, resizeSecond, stackAsIs, cancel]:
-                                button.setStyleSheet('''
-                                    border: 1px solid;
-                                    background-color: rgb(44, 44, 44);
-                                    height: 30px;
-                                    width: 100px;
-                                ''')
-
-                            msgBox.addButton(resizeFirst, QtWidgets.QMessageBox.ButtonRole.YesRole)
-                            msgBox.addButton(resizeSecond, QtWidgets.QMessageBox.ButtonRole.NoRole)
-                            msgBox.addButton(stackAsIs, QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
-                            msgBox.addButton(cancel, QtWidgets.QMessageBox.ButtonRole.RejectRole)
-                            msgBox.setStyleSheet('''
-                                background-color: rgb(22, 22, 22);
-                            ''')
-                            ret = msgBox.exec()
-
-                            from PIL import ImageOps
-
-                            if ret == 3:
-                                # Cancel operation
-                                self.HStackToolButton.setChecked(False)
-                                return
-                            elif ret == 0:
-                                # Resize first to match the size of second
-                                first = ImageOps.contain(first, (second.width, second.height))
-                            elif ret == 1:
-                                # Resize second to match the size of first
-                                second = ImageOps.contain(second, (first.width, first.height))
-                            elif ret == 2:
-                                # Do nothing
-                                pass
-
-                        # Vstack the two
-                        dst = Image.new('RGBA', (first.width, first.height + second.height))
-                        dst.paste(first, (0, 0))
-                        dst.paste(second, (0, first.height))
-
-                        # Save result
-                        updatedPixmap = self.ImageToQPixmap(dst)
-                        self.image_viewer.setImage(updatedPixmap, True, "VStack", "Tool", None, None)
-
-        self.VStackToolButton.setChecked(False)
-
-
-    def OnFlipLeftRightToolButton(self, checked):
-        if checked:
-            self.InitTool()
-            pixmap = self.getCurrentLayerLatestPixmap()
-            pil = self.QPixmapToImage(pixmap)
-            pil = pil.transpose(Image.FLIP_LEFT_RIGHT)
-            updatedPixmap = self.ImageToQPixmap(pil)
-            self.image_viewer.setImage(updatedPixmap, True, "Flip Left-Right", "Tool", None, None)
-        self.FlipLeftRightToolButton.setChecked(False)
-
-    def OnFlipTopBottomToolButton(self, checked):
-        if checked:
-            self.InitTool()
-            pixmap = self.getCurrentLayerLatestPixmap()
-            pil = self.QPixmapToImage(pixmap)
-            pil = pil.transpose(Image.FLIP_TOP_BOTTOM)
-            updatedPixmap = self.ImageToQPixmap(pil)
-            self.image_viewer.setImage(updatedPixmap, True, "Flip Top-Bottom", "Tool", None, None)
-        self.FlipTopBottomToolButton.setChecked(False)
-
-    def OnRectSelectToolButton(self, checked):
-        self.InitTool()
-        self.EnableTool("select_rect") if checked else self.DisableTool("select_rect")
-
-    def OnPathSelectToolButton(self, checked):
-        self.InitTool()
-        self.EnableTool("select_path") if checked else self.DisableTool("select_path")
-
-    def OnSpotRemovalToolButton(self, checked):
-        self.InitTool()
-        self.EnableTool("spot_removal") if checked else self.DisableTool("spot_removal")
-
-    @QtCore.pyqtSlot()
+            self.EnableTool("transfrom_select") if checked else self.DisableTool("transfrom_select")
+        else:
+            self.image_viewer.set_mode("")
+           
     def onSuperResolutionCompleted(self, tool):
+        if  self.image_viewer._isRectangleSelectPreseed:
+            self.image_viewer.clearImage()
+            self.image_viewer.open(self.image_viewer._current_filename)
+            self.image_viewer._isRectangleSelectPreseed = False
         output = tool.output
         if output is not None:
             # Save new pixmap
@@ -1314,6 +800,10 @@ class Gui(QtWidgets.QMainWindow):
         tool = None
 
     def OnSuperResolutionToolButton(self, checked):
+        if  self.image_viewer._isRectangleSelectPreseed:
+            self.image_viewer.clearImage()
+            self.image_viewer.open(self.image_viewer._current_filename)
+            self.image_viewer._isRectangleSelectPreseed = False
         if checked:
             self.InitTool()
             currentPixmap = self.getCurrentLayerLatestPixmap()
@@ -1336,6 +826,10 @@ class Gui(QtWidgets.QMainWindow):
         tool = None
 
     def OnWhiteBalanceToolButton(self, checked):
+        if  self.image_viewer._isRectangleSelectPreseed:
+            self.image_viewer.clearImage()
+            self.image_viewer.open(self.image_viewer._current_filename)
+            self.image_viewer._isRectangleSelectPreseed = False
         if checked:
             self.InitTool()
             currentPixmap = self.getCurrentLayerLatestPixmap()
@@ -1345,94 +839,8 @@ class Gui(QtWidgets.QMainWindow):
             widget = QToolWhiteBalance(None, image, self.onWhiteBalanceCompleted)
             widget.show()
 
-    def OnSlidersToolButton(self, checked):
-        if checked:
-            self.InitTool()
-
-            class SlidersScrollWidget(QtWidgets.QScrollArea):
-                def __init__(self, parent, mainWindow):
-                    QtWidgets.QScrollArea.__init__(self, parent)
-                    self.parent = parent
-                    self.closed = False
-                    self.mainWindow = mainWindow
-
-                def closeEvent(self, event):
-                    self.destroyed.emit()
-                    event.accept()
-                    self.closed = True
-                    self.mainWindow.SlidersToolButton.setChecked(False)
-                    self.mainWindow.image_viewer.setImage(self.mainWindow.image_viewer.pixmap(), True, "Sliders")
-
-            self.slidersScroll = SlidersScrollWidget(None, self)
-            self.slidersContent = QtWidgets.QWidget()
-            self.slidersScroll.setWidget(self.slidersContent)
-            self.slidersScroll.setWidgetResizable(True)
-            self.slidersLayout = QtWidgets.QFormLayout(self.slidersContent)
-
-            # Filter sliders
-            filter_label = QLabel("Basic")
-            self.slidersLayout.addWidget(filter_label)
-
-            # Enhance sliders
-            self.AddRedColorSlider(self.slidersLayout)
-            self.AddGreenColorSlider(self.slidersLayout)
-            self.AddBlueColorSlider(self.slidersLayout)
-            self.AddTemperatureSlider(self.slidersLayout)
-            self.AddColorSlider(self.slidersLayout)
-            self.AddBrightnessSlider(self.slidersLayout)
-            self.AddContrastSlider(self.slidersLayout)
-            self.AddSharpnessSlider(self.slidersLayout)
-
-            # State of enhance sliders
-            self.RedFactor = 100
-            self.GreenFactor = 100
-            self.BlueFactor = 100
-            self.Color = 100
-            self.Brightness = 100
-            self.Contrast = 100
-            self.Sharpness = 100
-
-            # Filter sliders
-            filter_label = QLabel("Filter")
-            self.slidersLayout.addWidget(filter_label)
-
-            # State of filter sliders
-            self.GaussianBlurRadius = 0
-
-            self.AddGaussianBlurSlider(self.slidersLayout)
-
-            self.slidersScroll.setStyleSheet('''
-                background-color: rgb(44, 44, 44);
-            ''')
-            self.slidersScroll.setMinimumWidth(300)
-            self.slidersScroll.setWindowTitle("Adjust")
-
-            self.slidersScroll.show()
-
-            # Create a local event loop for this widget
-            loop = QtCore.QEventLoop()
-            self.slidersScroll.destroyed.connect(loop.quit)
-            loop.exec()  # wait
-        else:
-            self.slidersScroll.hide()
-
-        self.SlidersToolButton.setChecked(False)
-
-    def OnCurveEditorToolButton(self, checked):
-        if checked:
-            self.InitTool()
-            self.CurveWidget = QCurveWidget.QCurveWidget(None, self.image_viewer)
-            self.CurveWidget.setWindowModality(Qt.WindowModality.ApplicationModal)
-            self.CurveWidget.show()
-
-            # Create a local event loop for this widget
-            loop = QtCore.QEventLoop()
-            self.CurveWidget.destroyed.connect(loop.quit)
-            loop.exec()  # wait
-        else:
-            self.CurveWidget.hide()
-
-        self.CurveEditorToolButton.setChecked(False)
+    def OnApplyToolButton(self,checked):
+        self.image_viewer.apply_merge()
 
     def OnInstagramFiltersToolButton(self, checked):
         if checked:
@@ -1478,12 +886,13 @@ class Gui(QtWidgets.QMainWindow):
             self.filtersDock.hide()
 
     def OnEraserToolButton(self, checked):
-        self.InitTool()
-        self.EnableTool("eraser") if checked else self.DisableTool("eraser")
-
-    def OnBlurToolButton(self, checked):
-        self.InitTool()
-        self.EnableTool("blur") if checked else self.DisableTool("blur")
+        if  self.image_viewer._isRectangleSelectPreseed:
+            self.image_viewer.clearImage()
+            self.image_viewer.open(self.image_viewer._current_filename)
+            self.image_viewer._isRectangleSelectPreseed = False
+        if checked:
+            self.InitTool()
+            self.EnableTool("eraser") if checked else self.DisableTool("eraser")
 
     def EnableTool(self, tool):
         for key, value in self.tools.items():
