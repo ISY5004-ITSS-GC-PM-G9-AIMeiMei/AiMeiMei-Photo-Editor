@@ -6,47 +6,46 @@ from PyQt6.QtGui import QPixmap, QPainter, QImage, QPainterPath, QPen, QColor, Q
 from PyQt6.QtCore import Qt, QBuffer, QIODevice
 from providers.sam_model_provider import SAMModelProvider
 
+
 class CustomGraphicsView(QGraphicsView):
     def __init__(self):
         super().__init__()
         self.scene = QGraphicsScene()
         self.setScene(self.scene)
-        self.main_pixmap_item = None
-        self.original_pixmap = None
-        self.background_pixmap = None
-        self.selected_pixmap_item = None
+        self.main_pixmap_item = None  # QGraphicsPixmapItem showing the main image
+        self.original_pixmap = None  # QPixmap of the originally loaded image
+        self.background_pixmap = None  # QPixmap used as the background layer
+        self.selected_pixmap_item = None  # QGraphicsPixmapItem for any selection overlay
         # We'll store contour items for easier removal.
         self.selection_feedback_items = []
         self.dragging = False
 
-        # Modes: "transform" (move/scale), "selection" (prompt-based), "auto" (automatic)
+        # Modes: "transform" (move/scale), "selection" (prompt-based), "auto" (automatic segmentation)
         self.mode = "transform"
-        self.positive_points = []
-        self.negative_points = []
-        self.auto_selection_mask = None
-        self.image_shape = None
+        self.positive_points = []  # For manual selection: positive seed points
+        self.negative_points = []  # For manual selection: negative seed points
+        self.auto_selection_mask = None  # Binary mask (as a numpy array) for auto-selected areas
+        self.image_shape = None  # Stores the (height, width) of the cv image
 
-        # Downscale factor for auto mask generation.
+        # Downscale factor was used previously for auto mask generation; removed as unused.
         self.downscale_factor = 1.0
 
-        self.cv_image = None
-        self.original_cv_image = None
-        self.base_cv_image = None
+        # Main OpenCV images (BGR format)
+        self.cv_image = None  # Current working image in OpenCV (BGR)
+        self.original_cv_image = None  # A copy of the originally loaded image (BGR)
+        self.base_cv_image = None  # A base copy used for re-applying detection/processing
 
-        self.cv_image_rgba = None
-        self.cv_image_rgb = None
-        self.cv_image_small = None
-        self.image_rgba_small = None
-        self.image_rgb_small = None
+        # Conversions for display (QImage requires RGBA)
+        self.cv_image_rgba = None  # cv_image converted to RGBA (used for QImage conversion)
 
         # Enhanced image for segmentation.
-        self.enhanced_cv_image = None
-        self.enhanced_cv_image_rgba = None
-        self.enhanced_cv_image_rgb = None
+        self.enhanced_cv_image = None  # Processed version (contrast + sharpen) of cv_image
+        self.enhanced_cv_image_rgba = None  # enhanced_cv_image converted to RGBA
+        self.enhanced_cv_image_rgb = None  # enhanced_cv_image converted to RGB (for SAM segmentation)
 
         # Cached masks from the auto mask generator.
         self.cached_masks = None
-        self.use_morphology = True
+        self.use_morphology = True  # Flag to apply morphological operations to masks
 
         # Toggle to enable hair refinement post-processing.
         self.apply_hair_refinement = True
@@ -59,10 +58,10 @@ class CustomGraphicsView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-        # Optional checkerboard background.
+        # Optional checkerboard background for transparency.
         self.checkerboard_pixmap = None
 
-        # Detection overlay item (placeholder).
+        # Detection overlay item (for detection results, if any).
         self.detection_overlay_item = None
 
         # Set transformation anchor to under the mouse for better zoom behavior.
@@ -71,7 +70,6 @@ class CustomGraphicsView(QGraphicsView):
     def apply_contrast_and_sharpen(self, image):
         """
         Enhances the image by boosting contrast and applying an unsharp mask.
-        Adjust the parameters as needed.
         """
         # Increase contrast (alpha > 1 boosts contrast)
         contrast_image = cv2.convertScaleAbs(image, alpha=1.3, beta=0)
@@ -82,19 +80,22 @@ class CustomGraphicsView(QGraphicsView):
         return sharpened
 
     def _update_cv_image_conversions(self):
+        """
+        Update various image conversions needed for display and processing.
+        """
         if self.cv_image is None or len(self.cv_image.shape) < 3:
             return
 
+        # Save image dimensions.
         self.image_shape = (self.cv_image.shape[0], self.cv_image.shape[1])
-        # Compute standard conversions for display.
+
+        # Convert main cv_image to RGBA for display.
         if self.cv_image.shape[2] == 4:
             self.cv_image_rgba = cv2.cvtColor(self.cv_image, cv2.COLOR_BGRA2RGBA)
-            self.cv_image_rgb = cv2.cvtColor(self.cv_image, cv2.COLOR_BGRA2RGB)
         else:
             self.cv_image_rgba = cv2.cvtColor(self.cv_image, cv2.COLOR_BGR2RGBA)
-            self.cv_image_rgb = cv2.cvtColor(self.cv_image, cv2.COLOR_BGR2RGB)
 
-        # Create an enhanced version for segmentation (contrast + sharpen).
+        # Create an enhanced version (contrast + sharpen) for segmentation.
         self.enhanced_cv_image = self.apply_contrast_and_sharpen(self.cv_image)
         if self.cv_image.shape[2] == 4:
             self.enhanced_cv_image_rgba = cv2.cvtColor(self.enhanced_cv_image, cv2.COLOR_BGRA2RGBA)
@@ -103,20 +104,8 @@ class CustomGraphicsView(QGraphicsView):
             self.enhanced_cv_image_rgba = cv2.cvtColor(self.enhanced_cv_image, cv2.COLOR_BGR2RGBA)
             self.enhanced_cv_image_rgb = cv2.cvtColor(self.enhanced_cv_image, cv2.COLOR_BGR2RGB)
 
-        # Downscale for auto mask generation.
-        self.cv_image_small = cv2.resize(
-            self.cv_image, (0, 0),
-            fx=self.downscale_factor,
-            fy=self.downscale_factor
-        )
-        if self.cv_image_small.shape[2] == 4:
-            self.image_rgba_small = cv2.cvtColor(self.cv_image_small, cv2.COLOR_BGRA2RGBA)
-            self.image_rgb_small = cv2.cvtColor(self.cv_image_small, cv2.COLOR_BGRA2RGB)
-        else:
-            self.image_rgba_small = cv2.cvtColor(self.cv_image_small, cv2.COLOR_BGR2RGBA)
-            self.image_rgb_small = cv2.cvtColor(self.cv_image_small, cv2.COLOR_BGR2RGB)
-
-        # Generate auto masks using the enhanced image for better hair detail.
+        # Removed downscaled versions since they are not used.
+        # Generate auto masks using the enhanced image for better detail.
         if self.mode != "transform":
             with torch.no_grad():
                 self.cached_masks = SAMModelProvider.get_auto_mask_generator().generate(self.enhanced_cv_image_rgb)
@@ -124,6 +113,9 @@ class CustomGraphicsView(QGraphicsView):
             self.cached_masks = None
 
     def drawBackground(self, painter, rect):
+        """
+        Draws a checkerboard background.
+        """
         if self.main_pixmap_item:
             image_rect = self.main_pixmap_item.boundingRect()
         else:
@@ -135,17 +127,24 @@ class CustomGraphicsView(QGraphicsView):
             self.checkerboard_pixmap.fill(Qt.GlobalColor.white)
             tile_painter = QPainter(self.checkerboard_pixmap)
             tile_painter.fillRect(0, 0, tile_size // 2, tile_size // 2, Qt.GlobalColor.lightGray)
-            tile_painter.fillRect(tile_size // 2, tile_size // 2, tile_size // 2, tile_size // 2, Qt.GlobalColor.lightGray)
+            tile_painter.fillRect(tile_size // 2, tile_size // 2, tile_size // 2, tile_size // 2,
+                                  Qt.GlobalColor.lightGray)
             tile_painter.end()
 
         brush = QBrush(self.checkerboard_pixmap)
         painter.fillRect(image_rect, brush)
 
     def save(self, filepath=None):
+        """
+        Save the current main image pixmap.
+        """
         if filepath:
             self.main_pixmap_item.pixmap().save(filepath, None, 100)
 
     def load_image(self, image_path):
+        """
+        Load an image from disk, initialize cv_image variables and update display.
+        """
         self.scene.clear()
         self.main_pixmap_item = None
         self.selected_pixmap_item = None
@@ -162,9 +161,11 @@ class CustomGraphicsView(QGraphicsView):
             print(f"Error: Could not load image from {image_path}")
             return
 
+        # Save copies for resetting or baseline processing.
         self.original_cv_image = self.cv_image.copy()
         self.base_cv_image = self.cv_image.copy()
 
+        # Create QPixmap for display. If image is not PNG, encode it as PNG.
         if not image_path.lower().endswith('.png'):
             ret, buf = cv2.imencode('.png', self.cv_image)
             if ret:
@@ -180,6 +181,7 @@ class CustomGraphicsView(QGraphicsView):
         self.background_pixmap = self.original_pixmap.copy()
         self._update_cv_image_conversions()
 
+        # Initialize an empty selection mask.
         self.auto_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
         self.main_pixmap_item = QGraphicsPixmapItem(self.original_pixmap)
         self.scene.addItem(self.main_pixmap_item)
@@ -187,6 +189,9 @@ class CustomGraphicsView(QGraphicsView):
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def set_mode(self, mode):
+        """
+        Set the current mode and reset points if necessary.
+        """
         self.mode = mode
         print(f"Mode set to: {mode}")
         if mode != "selection":
@@ -197,8 +202,10 @@ class CustomGraphicsView(QGraphicsView):
 
     def ai_salient_object_selection(self):
         """
-        Handles prompt-based selection: gathers clicks, runs SAM on the enhanced image,
-        picks the best mask, and merges it with the union mask.
+        Handles prompt-based selection:
+         - Gathers positive/negative click points.
+         - Runs SAM on the enhanced image.
+         - Merges the best mask into the auto selection mask.
         """
         if self.cv_image is None:
             print("No image loaded")
@@ -209,7 +216,6 @@ class CustomGraphicsView(QGraphicsView):
 
         with torch.no_grad():
             predictor = SAMModelProvider.get_predictor()
-            # Use the enhanced image (contrast + sharpened) for better segmentation of hair.
             predictor.set_image(self.enhanced_cv_image_rgb)
 
             points = []
@@ -250,7 +256,9 @@ class CustomGraphicsView(QGraphicsView):
 
     def auto_salient_object_update(self, click_point, action="add"):
         """
-        Handles auto mode: selects the best mask near the click point and merges or removes it.
+        Handles auto mode:
+         - Selects the best mask near a click point.
+         - Merges or removes the mask from the auto selection mask.
         """
         if self.cv_image is None:
             print("No image loaded")
@@ -261,6 +269,7 @@ class CustomGraphicsView(QGraphicsView):
 
         x = int(click_point.x())
         y = int(click_point.y())
+        # Since downscaled versions are removed, use original coordinates.
         x_small = int(x * self.downscale_factor)
         y_small = int(y * self.downscale_factor)
 
@@ -297,8 +306,9 @@ class CustomGraphicsView(QGraphicsView):
             self.auto_selection_mask = cv2.morphologyEx(self.auto_selection_mask, cv2.MORPH_CLOSE, bridge_kernel)
             print("Added object to selection (auto) with bridging.")
         elif action == "remove":
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(self.auto_selection_mask,
-                                                                                    connectivity=8)
+            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+                self.auto_selection_mask, connectivity=8
+            )
             overlap_label = None
             max_overlap = 0
             for lbl in range(1, num_labels):
@@ -319,10 +329,10 @@ class CustomGraphicsView(QGraphicsView):
 
     def update_auto_selection_display(self):
         """
-        Renders the auto_selection_mask in two layers:
-          1) The main image with the selected area made transparent.
-          2) An overlay showing the selected region with a dual (white & black) contour.
-        Also applies hair refinement via a bilateral filter.
+        Renders the current auto selection mask:
+          - Updates the main image display (selected areas become transparent).
+          - Creates an overlay showing the selected region with contour feedback.
+        Optionally applies hair refinement via a bilateral filter.
         """
         if self.cv_image is None or self.auto_selection_mask is None:
             return
@@ -333,6 +343,7 @@ class CustomGraphicsView(QGraphicsView):
             _, refined_mask = cv2.threshold(refined_mask, 127, 255, cv2.THRESH_BINARY)
             mask_uint8 = refined_mask
 
+        # Create a version of the cv image with selected areas made transparent.
         bg_rgba = self.cv_image_rgba.copy()
         bg_rgba[mask_uint8 == 255, 3] = 0
         bg_h, bg_w, bg_ch = bg_rgba.shape
@@ -342,6 +353,7 @@ class CustomGraphicsView(QGraphicsView):
         self.original_pixmap = bg_pixmap
         self.main_pixmap_item.setPixmap(self.original_pixmap)
 
+        # Create an overlay pixmap for feedback (shows contour outlines).
         overlay_rgba = self.cv_image_rgba.copy()
         overlay_rgba[mask_uint8 == 0] = [0, 0, 0, 0]
         ov_h, ov_w, ov_ch = overlay_rgba.shape
@@ -380,8 +392,10 @@ class CustomGraphicsView(QGraphicsView):
 
     def apply_merge(self):
         """
-        Renders the overlay into the main image (merging the selection),
-        updates self.cv_image, and resets the selection.
+        Merges the current selection overlay into the main image:
+         - Renders the overlay on top of the main pixmap.
+         - Updates the cv_image with the merged result.
+         - Resets the selection mask and cached masks.
         """
         if not self.selected_pixmap_item and np.count_nonzero(self.auto_selection_mask) == 0:
             print("No selected object or active selection mask to merge.")

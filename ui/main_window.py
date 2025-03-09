@@ -15,6 +15,7 @@ from PIL.ImageQt import ImageQt
 from ui.custom_graphics_view import CustomGraphicsView
 from providers.controlnet_model_provider import load_controlnet, make_divisible_by_8
 from providers.yolo_detection_provider import detect_main_object
+from providers.realesrgan_provider import upscale_image
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -78,6 +79,11 @@ class MainWindow(QMainWindow):
         self.detection_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.detection_toggle_button.clicked.connect(self.toggle_detection_action)
         left_layout.addWidget(self.detection_toggle_button)
+
+        upscale_button = QPushButton("4k Resolution")
+        upscale_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        upscale_button.clicked.connect(self.upscale_image_action)
+        left_layout.addWidget(upscale_button)
 
         controlnet_generate_button = QPushButton("Control Net Generate")
         controlnet_generate_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -404,3 +410,34 @@ class MainWindow(QMainWindow):
                 self.view.detection_overlay_item.setPos(self.view.main_pixmap_item.pos())
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
+
+    def upscale_image_action(self):
+        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+            QMessageBox.warning(self, "Upscale Image", "No image loaded for processing.")
+            return
+
+        try:
+            # Get current OpenCV image (BGR)
+            cv_img = self.view.cv_image
+
+            # Upscale the image using RealESRGAN provider.
+            result = upscale_image(cv_img)
+
+            # Update the view's images.
+            self.view.cv_image = result
+            self.view.base_cv_image = result.copy()
+
+            # Convert upscaled image for display (BGR -> RGB -> QImage).
+            result_rgb = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
+            height, width, channels = result_rgb.shape
+            bytes_per_line = channels * width
+            result_qimage = QImage(result_rgb.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+            result_pixmap = QPixmap.fromImage(result_qimage)
+
+            self.view.main_pixmap_item.setPixmap(result_pixmap)
+            self.view.background_pixmap = result_pixmap
+
+            QMessageBox.information(self, "Upscale Image", "Image upscaled successfully!")
+        except Exception as e:
+            QMessageBox.critical(self, "Upscale Image Error", f"An error occurred: {str(e)}")
+
