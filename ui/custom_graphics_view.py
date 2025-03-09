@@ -306,22 +306,9 @@ class CustomGraphicsView(QGraphicsView):
             self.auto_selection_mask = cv2.morphologyEx(self.auto_selection_mask, cv2.MORPH_CLOSE, bridge_kernel)
             print("Added object to selection (auto) with bridging.")
         elif action == "remove":
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-                self.auto_selection_mask, connectivity=8
-            )
-            overlap_label = None
-            max_overlap = 0
-            for lbl in range(1, num_labels):
-                comp_mask = np.array(labels == lbl, dtype=np.uint8) * 255
-                overlap = cv2.countNonZero(cv2.bitwise_and(comp_mask, new_mask))
-                if overlap > max_overlap:
-                    max_overlap = overlap
-                    overlap_label = lbl
-            if overlap_label is not None:
-                self.auto_selection_mask[labels == overlap_label] = 0
-                print("Removed connected component from selection (auto).")
-            else:
-                print("No overlapping component found to remove.")
+            inv = cv2.bitwise_not(new_mask)
+            self.auto_selection_mask = cv2.bitwise_and(self.auto_selection_mask, inv)
+            print("Removed object from selection (auto).")
         else:
             print("Unknown action")
 
