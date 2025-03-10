@@ -5,18 +5,147 @@ import glob
 import uuid
 import cv2
 import numpy as np
+import pilgram
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QFileDialog, QMessageBox, QLabel, QTextEdit, QListWidget, QListWidgetItem, QGraphicsPixmapItem
+    QPushButton, QFileDialog, QMessageBox, QLabel, QTextEdit,
+    QToolButton, QScrollArea, QListWidget, QListWidgetItem, QGraphicsPixmapItem
 )
+from PyQt6.QtGui import QScreen, QPixmap, QAction, QImage, QPainter, QIcon
 from PyQt6.QtCore import Qt, QRect, QSize, QBuffer, QIODevice
-from PyQt6.QtGui import QScreen, QPixmap, QAction, QIcon, QImage, QPainter
 from PIL import Image
 from PIL.ImageQt import ImageQt
+
+# Import your custom graphics view and providers.
 from ui.custom_graphics_view import CustomGraphicsView
 from providers.controlnet_model_provider import load_controlnet, make_divisible_by_8
 from providers.yolo_detection_provider import detect_main_object
 
+# ------------------------------------------------------------------
+# FilterPanelWidget: vertical, scrollable panel on the right side.
+# ------------------------------------------------------------------
+class FilterPanelWidget(QWidget):
+    def __init__(self, view, parent=None):
+        super().__init__(parent)
+        self.view = view  # CustomGraphicsView instance
+        self.original_image = None  # PIL image will be stored here
+        self.available_filters = self.get_available_filters()
+        self.buttonIconSize = QSize(200, 200)
+        self.initUI()
+
+    def get_available_filters(self):
+        # Explicit list of filter functions and their names from Pilgram.
+        filters = {
+            "No Filter": lambda im: im,
+            "1977": pilgram._1977,
+            "Aden": pilgram.aden,
+            "Brannan": pilgram.brannan,
+            "Brooklyn": pilgram.brooklyn,
+            "Clarendon": pilgram.clarendon,
+            "Earlybird": pilgram.earlybird,
+            "Gingham": pilgram.gingham,
+            "Hudson": pilgram.hudson,
+            "Inkwell": pilgram.inkwell,
+            "Kelvin": pilgram.kelvin,
+            "Lark": pilgram.lark,
+            "Lofi": pilgram.lofi,
+            "Maven": pilgram.maven,
+            "Mayfair": pilgram.mayfair,
+            "Moon": pilgram.moon,
+            "Nashville": pilgram.nashville,
+            "Perpetua": pilgram.perpetua,
+            "Reyes": pilgram.reyes,
+            "Rise": pilgram.rise,
+            "Slumber": pilgram.slumber,
+            "Stinson": pilgram.stinson,
+            "Toaster": pilgram.toaster,
+            "Valencia": pilgram.valencia,
+            "Walden": pilgram.walden,
+            "Willow": pilgram.willow,
+            "Xpro2": pilgram.xpro2,
+        }
+        return filters
+
+    def ImageToQPixmap(self, image):
+        """Convert a PIL image to QPixmap with smooth scaling to a fixed icon size."""
+        qimage = ImageQt(image.convert("RGBA"))
+        pix = QPixmap.fromImage(qimage)
+        return pix.scaled(self.buttonIconSize, Qt.AspectRatioMode.KeepAspectRatio,
+                          Qt.TransformationMode.SmoothTransformation)
+
+    def initUI(self):
+        # Create a scroll area to hold the filter buttons.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        self.layout = QVBoxLayout(container)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll.setWidget(container)
+        mainLayout = QVBoxLayout(self)
+        mainLayout.addWidget(scroll)
+        self.setLayout(mainLayout)
+
+    def refresh_thumbnails(self):
+        # Clear existing buttons.
+        while self.layout.count():
+            child = self.layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        # Check if an image is loaded in the view.
+        if self.view.main_pixmap_item is None:
+            return
+
+        # Get the original image from the view.
+        qpixmap = self.view.main_pixmap_item.pixmap()
+        pil_image = Image.fromqimage(qpixmap.toImage())
+        self.original_image = pil_image
+
+        # Create "No Filter" button.
+        noFilterButton = QToolButton()
+        unfilteredPixmap = self.ImageToQPixmap(pil_image)
+        noFilterButton.setIcon(QIcon(unfilteredPixmap))
+        noFilterButton.setIconSize(self.buttonIconSize)
+        noFilterButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        noFilterButton.setText("No Filter")
+        noFilterButton.setObjectName("No Filter")
+        noFilterButton.clicked.connect(self.OnFilterSelect)
+        self.layout.addWidget(noFilterButton)
+
+        # Create a button for each filter (except "No Filter").
+        for name, f in self.available_filters.items():
+            if name == "No Filter":
+                continue
+            filterButton = QToolButton()
+            try:
+                filtered = f(pil_image.copy()).convert("RGBA")
+            except Exception as e:
+                print(f"Error applying filter {name}: {e}")
+                filtered = pil_image.copy()
+            filteredPixmap = self.ImageToQPixmap(filtered)
+            filterButton.setIcon(QIcon(filteredPixmap))
+            filterButton.setIconSize(self.buttonIconSize)
+            filterButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            filterButton.setText(name)
+            filterButton.setObjectName(name)
+            filterButton.clicked.connect(self.OnFilterSelect)
+            self.layout.addWidget(filterButton)
+
+    def OnFilterSelect(self):
+        import pilgram
+        button = self.sender()
+        filterName = button.objectName()
+        if filterName != "unfiltered":
+            filterFunction = getattr(pilgram, filterName)
+            self.output = filterFunction(self.toolInput).convert("RGBA")
+        else:
+            self.output = self.toolInput
+        self.parent.image_viewer.setImage(self.parent.ImageToQPixmap(self.output), False)
+
+# ------------------------------------------------------------------
+# MainWindow class
+# ------------------------------------------------------------------
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -38,7 +167,7 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
 
         # ---------------------------
-        # Top Section (≈5% height)
+        # Top Section (~5% height)
         # ---------------------------
         top_widget = QWidget()
         top_layout = QHBoxLayout(top_widget)
@@ -47,7 +176,7 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(score_label)
 
         # ---------------------------
-        # Center Section (≈70% height)
+        # Center Section (~70% height)
         # ---------------------------
         center_widget = QWidget()
         center_layout = QHBoxLayout(center_widget)
@@ -67,14 +196,12 @@ class MainWindow(QMainWindow):
             left_layout.addWidget(btn)
             self.mode_buttons[mode] = btn
 
-        # Detection toggle button (for drawing detection overlay automatically)
         self.detection_toggle_button = QPushButton("Detection: OFF")
         self.detection_toggle_button.setCheckable(True)
         self.detection_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.detection_toggle_button.clicked.connect(self.toggle_detection_action)
         left_layout.addWidget(self.detection_toggle_button)
 
-        # New button for U2NET-based auto segmentation (immediate action)
         auto_select_button = QPushButton("Auto Select Salient Object")
         auto_select_button.setCursor(Qt.CursorShape.PointingHandCursor)
         auto_select_button.clicked.connect(self.u2net_auto_action)
@@ -95,28 +222,19 @@ class MainWindow(QMainWindow):
         controlnet_generate_button.clicked.connect(self.control_net_action)
         left_layout.addWidget(controlnet_generate_button)
 
-
         left_layout.addStretch(1)
 
         # Center: Image view (70% width)
         self.view = CustomGraphicsView()
 
-        # Right: Layer info panel (15% width)
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        self.layer_info = QTextEdit()
-        self.layer_info.setReadOnly(True)
-        self.layer_info.setPlaceholderText("Layer info will be shown here")
-        right_layout.addWidget(self.layer_info)
-        right_layout.addStretch(1)
-
+        # Right: Filter panel (vertical, scrollable)
+        self.filter_panel = FilterPanelWidget(self.view)
         center_layout.addWidget(left_panel, 15)
         center_layout.addWidget(self.view, 70)
-        center_layout.addWidget(right_panel, 15)
+        center_layout.addWidget(self.filter_panel, 15)
 
         # ---------------------------
-        # Bottom Section (≈25% height)
+        # Bottom Section (~25% height)
         # ---------------------------
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout(bottom_widget)
@@ -138,7 +256,7 @@ class MainWindow(QMainWindow):
         prompt_layout.addWidget(restore_button)
         bottom_layout.addLayout(prompt_layout, 1)
 
-        # Right: Reference images panel using QListWidget.
+        # Right: Reference images panel remains unchanged.
         reference_container = QWidget()
         reference_vlayout = QVBoxLayout(reference_container)
         reference_vlayout.setContentsMargins(0, 0, 0, 0)
@@ -256,6 +374,7 @@ class MainWindow(QMainWindow):
         if image_file:
             self.view.load_image(image_file)
             self.current_file = image_file
+            self.filter_panel.refresh_thumbnails()  # Update filter thumbnails with the new image.
             if self.detection_enabled:
                 self.update_detection()
 
@@ -359,7 +478,6 @@ class MainWindow(QMainWindow):
         if has_alpha:
             alpha_channel = frame[:, :, 3]
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-
         try:
             from providers.yolo_detection_provider import detect_objects, group_objects, select_focus_object
             objects = detect_objects(frame, alpha_channel)
@@ -368,17 +486,13 @@ class MainWindow(QMainWindow):
                     self.view.scene.removeItem(self.view.detection_overlay_item)
                     self.view.detection_overlay_item = None
                 return
-
             grouped_clusters = group_objects(objects)
             focus_group = select_focus_object(grouped_clusters, frame.shape)
-
             overlay = np.zeros((height, width, 4), dtype=np.uint8)
-
             if focus_group is not None:
                 blue = (0, 0, 255, 255)
                 red = (255, 0, 0, 255)
                 scale_factor = 0.95
-
                 for member in focus_group.get("members", []):
                     bx1, by1, bx2, by2 = member["bbox"]
                     box_width = bx2 - bx1
@@ -391,20 +505,16 @@ class MainWindow(QMainWindow):
                     new_by1 = center_y - new_height // 2
                     new_bx2 = new_bx1 + new_width
                     new_by2 = new_by1 + new_height
-
                     cv2.rectangle(overlay, (new_bx1, new_by1), (new_bx2, new_by2), blue, thickness=2)
                     label = member.get("label", "object")
                     confidence = member.get("confidence", 0)
                     debug_text = f"{label} {confidence:.2f}"
                     cv2.putText(overlay, debug_text, (new_bx1, new_by1 - 5),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, blue, 1, cv2.LINE_AA)
-
                 x1, y1, x2, y2 = focus_group["bbox"]
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), red, thickness=3)
-
             q_image = QImage(overlay.data, width, height, width * 4, QImage.Format.Format_RGBA8888)
             overlay_pixmap = QPixmap.fromImage(q_image)
-
             if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
                 self.view.detection_overlay_item.setPixmap(overlay_pixmap)
             else:

@@ -1,3 +1,4 @@
+#ui.custom_graphics_view
 import cv2
 import numpy as np
 import torch
@@ -5,7 +6,6 @@ from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
 from PyQt6.QtGui import QPixmap, QPainter, QImage, QPainterPath, QPen, QColor, QBrush
 from PyQt6.QtCore import Qt, QBuffer, QIODevice
 from providers.sam_model_provider import SAMModelProvider
-
 
 class CustomGraphicsView(QGraphicsView):
     def __init__(self):
