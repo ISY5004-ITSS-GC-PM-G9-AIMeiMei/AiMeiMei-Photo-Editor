@@ -1,3 +1,4 @@
+# main_window.py
 import os
 import shutil
 import glob
@@ -15,7 +16,6 @@ from PIL.ImageQt import ImageQt
 from ui.custom_graphics_view import CustomGraphicsView
 from providers.controlnet_model_provider import load_controlnet, make_divisible_by_8
 from providers.yolo_detection_provider import detect_main_object
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -58,8 +58,7 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         mode_map = {
             "Transform": "transform",
-            "Select Object": "selection",
-            "Select Salient Object": "auto"
+            "Select Object": "selection"
         }
         for text, mode in mode_map.items():
             btn = QPushButton(text)
@@ -68,17 +67,23 @@ class MainWindow(QMainWindow):
             left_layout.addWidget(btn)
             self.mode_buttons[mode] = btn
 
-        deselect_button = QPushButton("Deselect Selection")
-        deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        deselect_button.clicked.connect(self.apply_action)
-        left_layout.addWidget(deselect_button)
-
         # Detection toggle button (for drawing detection overlay automatically)
         self.detection_toggle_button = QPushButton("Detection: OFF")
         self.detection_toggle_button.setCheckable(True)
         self.detection_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.detection_toggle_button.clicked.connect(self.toggle_detection_action)
         left_layout.addWidget(self.detection_toggle_button)
+
+        # New button for U2NET-based auto segmentation (immediate action)
+        auto_select_button = QPushButton("Auto Select Salient Object")
+        auto_select_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        auto_select_button.clicked.connect(self.u2net_auto_action)
+        left_layout.addWidget(auto_select_button)
+
+        deselect_button = QPushButton("Deselect Selection")
+        deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        deselect_button.clicked.connect(self.apply_action)
+        left_layout.addWidget(deselect_button)
 
         upscale_button = QPushButton("4k Resolution")
         upscale_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -89,6 +94,7 @@ class MainWindow(QMainWindow):
         controlnet_generate_button.setCursor(Qt.CursorShape.PointingHandCursor)
         controlnet_generate_button.clicked.connect(self.control_net_action)
         left_layout.addWidget(controlnet_generate_button)
+
 
         left_layout.addStretch(1)
 
@@ -411,7 +417,26 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
+    def u2net_auto_action(self):
+        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+            QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
+            return
+        try:
+            from providers.u2net_provider import U2NetProvider
+            mask = U2NetProvider.get_salient_mask(self.view.cv_image)
+            self.view.auto_selection_mask = mask
+            self.view.update_auto_selection_display()
+            QMessageBox.information(self, "Auto Salient Object", "Salient object segmentation completed.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
+
     def upscale_image_action(self):
         print('TODO')
 
-
+if __name__ == "__main__":
+    import sys
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
