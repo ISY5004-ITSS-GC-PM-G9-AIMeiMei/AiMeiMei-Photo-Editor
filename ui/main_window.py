@@ -14,8 +14,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QScreen, QPixmap, QAction, QImage, QPainter, QIcon
 from PyQt6.QtCore import Qt, QRect, QSize, QBuffer, QIODevice
-from PIL import Image
+from PIL import Image, ImageDraw
 from PIL.ImageQt import ImageQt
+
 
 # Import your custom graphics view and providers.
 from ui.custom_graphics_view import CustomGraphicsView
@@ -36,8 +37,8 @@ class FilterPanelWidget(QWidget):
 
     def get_available_filters(self):
         # Explicit list of filter functions and their names from Pilgram.
+        # "No Filter" removed.
         filters = {
-            "No Filter": lambda im: im,
             "1977": pilgram._1977,
             "Aden": pilgram.aden,
             "Brannan": pilgram.brannan,
@@ -67,12 +68,52 @@ class FilterPanelWidget(QWidget):
         }
         return filters
 
+    def create_checkerboard(self, size):
+        """Generate a checkerboard PIL image of the given size."""
+        tile_size = 20
+        width, height = size
+        checkerboard = Image.new("RGBA", size, "white")
+        draw = ImageDraw.Draw(checkerboard)
+        for y in range(0, height, tile_size):
+            for x in range(0, width, tile_size):
+                if (x // tile_size + y // tile_size) % 2 == 0:
+                    draw.rectangle([x, y, x + tile_size - 1, y + tile_size - 1], fill="lightgray")
+        return checkerboard
+
+    def composite_with_checkerboard(self, image):
+        """If the image has transparency, composite it on top of a checkerboard."""
+        if image.mode != "RGBA":
+            image = image.convert("RGBA")
+        bg = self.create_checkerboard(image.size)
+        return Image.alpha_composite(bg, image)
+
     def ImageToQPixmap(self, image):
-        """Convert a PIL image to QPixmap with smooth scaling to a fixed icon size."""
+        """
+        Convert a PIL image to QPixmap with smooth scaling to a fixed icon size.
+        This is used only for thumbnails.
+        """
+        if image is None:
+            image = self.create_checkerboard((self.buttonIconSize.width(), self.buttonIconSize.height()))
+        elif "A" in image.getbands():
+            image = self.composite_with_checkerboard(image)
         qimage = ImageQt(image.convert("RGBA"))
         pix = QPixmap.fromImage(qimage)
         return pix.scaled(self.buttonIconSize, Qt.AspectRatioMode.KeepAspectRatio,
                           Qt.TransformationMode.SmoothTransformation)
+
+    def PILImageToQPixmap(self, image):
+        """
+        Convert a PIL image to QPixmap without scaling.
+        This is used when updating the main image view.
+        """
+        if image is None:
+            # Use the scene's size as fallback.
+            rect = self.view.scene.sceneRect()
+            image = self.create_checkerboard((int(rect.width()), int(rect.height())))
+        elif "A" in image.getbands():
+            image = self.composite_with_checkerboard(image)
+        qimage = ImageQt(image.convert("RGBA"))
+        return QPixmap.fromImage(qimage)
 
     def initUI(self):
         # Create a scroll area to hold the filter buttons.
@@ -86,43 +127,44 @@ class FilterPanelWidget(QWidget):
         mainLayout.addWidget(scroll)
         self.setLayout(mainLayout)
 
+    def get_filtered_image_with_alpha(self, image, filter_function):
+        """
+        Apply a Pilgram filter while preserving the original alpha channel
+        (if the image already has transparency).
+        """
+        if image.mode != "RGBA":
+            image = image.convert("RGBA")
+        r, g, b, a = image.split()
+        rgb_image = Image.merge("RGB", (r, g, b))
+        filtered_rgb = filter_function(rgb_image)
+        filtered_rgba = filtered_rgb.convert("RGBA")
+        filtered_rgba.putalpha(a)
+        return filtered_rgba
+
     def refresh_thumbnails(self):
-        # Clear existing buttons.
+        # Clear existing buttons
         while self.layout.count():
             child = self.layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
-        # Check if an image is loaded in the view.
         if self.view.main_pixmap_item is None:
-            return
+            self.original_image = self.create_checkerboard(
+                (self.buttonIconSize.width(), self.buttonIconSize.height())
+            )
+        else:
+            qpixmap = self.view.main_pixmap_item.pixmap()
+            pil_image = Image.fromqimage(qpixmap.toImage())
+            self.original_image = pil_image
 
-        # Get the original image from the view.
-        qpixmap = self.view.main_pixmap_item.pixmap()
-        pil_image = Image.fromqimage(qpixmap.toImage())
-        self.original_image = pil_image
-
-        # Create "No Filter" button.
-        noFilterButton = QToolButton()
-        unfilteredPixmap = self.ImageToQPixmap(pil_image)
-        noFilterButton.setIcon(QIcon(unfilteredPixmap))
-        noFilterButton.setIconSize(self.buttonIconSize)
-        noFilterButton.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        noFilterButton.setText("No Filter")
-        noFilterButton.setObjectName("No Filter")
-        noFilterButton.clicked.connect(self.OnFilterSelect)
-        self.layout.addWidget(noFilterButton)
-
-        # Create a button for each filter (except "No Filter").
+        # Create filter buttons for each filter.
         for name, f in self.available_filters.items():
-            if name == "No Filter":
-                continue
             filterButton = QToolButton()
             try:
-                filtered = f(pil_image.copy()).convert("RGBA")
+                filtered = self.get_filtered_image_with_alpha(self.original_image.copy(), f)
             except Exception as e:
                 print(f"Error applying filter {name}: {e}")
-                filtered = pil_image.copy()
+                filtered = self.original_image.copy()
             filteredPixmap = self.ImageToQPixmap(filtered)
             filterButton.setIcon(QIcon(filteredPixmap))
             filterButton.setIconSize(self.buttonIconSize)
@@ -133,15 +175,24 @@ class FilterPanelWidget(QWidget):
             self.layout.addWidget(filterButton)
 
     def OnFilterSelect(self):
-        import pilgram
+        """
+        Apply the selected filter to the original image, and update
+        the main_pixmap_item in the CustomGraphicsView using full resolution.
+        """
         button = self.sender()
         filterName = button.objectName()
-        if filterName != "unfiltered":
-            filterFunction = getattr(pilgram, filterName)
-            self.output = filterFunction(self.toolInput).convert("RGBA")
+        filterFunction = self.available_filters.get(filterName, None)
+        if not filterFunction:
+            return
+
+        filtered = self.get_filtered_image_with_alpha(self.original_image.copy(), filterFunction)
+        qpixmap_filtered = self.PILImageToQPixmap(filtered)
+        if self.view.main_pixmap_item is not None:
+            self.view.main_pixmap_item.setPixmap(qpixmap_filtered)
         else:
-            self.output = self.toolInput
-        self.parent.image_viewer.setImage(self.parent.ImageToQPixmap(self.output), False)
+            self.view.main_pixmap_item = QGraphicsPixmapItem(qpixmap_filtered)
+            self.view.scene.addItem(self.view.main_pixmap_item)
+
 
 # ------------------------------------------------------------------
 # MainWindow class
@@ -152,32 +203,23 @@ class MainWindow(QMainWindow):
         self.current_file = None
         self.mode_buttons = {}  # To store mode buttons
         self.detection_enabled = False  # Toggle for detection overlay
-
-        # Ensure reference images directory exists.
         self.reference_dir = "images/reference_images"
         os.makedirs(self.reference_dir, exist_ok=True)
-
         self.initUI()
 
     def initUI(self):
         self.setWindowTitle("Image Editor")
-
-        # Main vertical layout.
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
 
-        # ---------------------------
         # Top Section (~5% height)
-        # ---------------------------
         top_widget = QWidget()
         top_layout = QHBoxLayout(top_widget)
         score_label = QLabel("Aesthetic Score: 85 | Position: Good | Angle: Optimal | Brightness: Balanced | Focus: Sharp")
         score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         top_layout.addWidget(score_label)
 
-        # ---------------------------
         # Center Section (~70% height)
-        # ---------------------------
         center_widget = QWidget()
         center_layout = QHBoxLayout(center_widget)
 
@@ -233,9 +275,7 @@ class MainWindow(QMainWindow):
         center_layout.addWidget(self.view, 70)
         center_layout.addWidget(self.filter_panel, 15)
 
-        # ---------------------------
         # Bottom Section (~25% height)
-        # ---------------------------
         bottom_widget = QWidget()
         bottom_layout = QHBoxLayout(bottom_widget)
         # Left: Prompt area.
@@ -256,7 +296,7 @@ class MainWindow(QMainWindow):
         prompt_layout.addWidget(restore_button)
         bottom_layout.addLayout(prompt_layout, 1)
 
-        # Right: Reference images panel remains unchanged.
+        # Right: Reference images panel
         reference_container = QWidget()
         reference_vlayout = QVBoxLayout(reference_container)
         reference_vlayout.setContentsMargins(0, 0, 0, 0)
@@ -276,9 +316,6 @@ class MainWindow(QMainWindow):
         reference_vlayout.addWidget(self.reference_list_widget)
         bottom_layout.addWidget(reference_container, 1)
 
-        # ---------------------------
-        # Assemble Main Layout
-        # ---------------------------
         main_layout.addWidget(top_widget, 5)
         main_layout.addWidget(center_widget, 70)
         main_layout.addWidget(bottom_widget, 25)
@@ -298,8 +335,11 @@ class MainWindow(QMainWindow):
             for file in os.listdir(self.reference_dir):
                 file_path = os.path.join(self.reference_dir, file)
                 if os.path.isfile(file_path):
-                    icon = QIcon(QPixmap(file_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio,
-                                                             Qt.TransformationMode.SmoothTransformation))
+                    icon = QIcon(QPixmap(file_path).scaled(
+                        50, 50,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    ))
                     item = QListWidgetItem(icon, file)
                     item.setData(Qt.ItemDataRole.UserRole, file_path)
                     self.reference_list_widget.addItem(item)
@@ -415,12 +455,14 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Control Net", "Unsupported image format.")
             return
+
         pil_image_rgba = pil_image.convert("RGBA")
         original_size = pil_image_rgba.size
         alpha = pil_image_rgba.split()[3]
         mask = alpha.point(lambda p: 255 if p < 128 else 0).convert("L")
         pil_image_rgb = pil_image_rgba.convert("RGB")
         adjusted_size = make_divisible_by_8(original_size)
+
         reference_images = []
         for img_path in glob.glob(os.path.join(self.reference_dir, "*.*")):
             try:
@@ -428,10 +470,12 @@ class MainWindow(QMainWindow):
                 reference_images.append(ref_img)
             except Exception as e:
                 print(f"Error loading reference image {img_path}: {e}")
+
         prompt = self.prompt_field.toPlainText().strip()
         if not prompt:
             QMessageBox.warning(self, "Control Net", "Please enter a prompt for inpainting.")
             return
+
         pipe = load_controlnet()
         try:
             result = pipe(
@@ -442,17 +486,21 @@ class MainWindow(QMainWindow):
                 height=adjusted_size[1],
                 width=adjusted_size[0]
             ).images[0]
+
             result = result.resize(original_size, Image.Resampling.LANCZOS)
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.main_pixmap_item.setPixmap(pixmap)
             self.view.background_pixmap = pixmap
+
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.cv_image = result_np
             self.view.base_cv_image = self.view.cv_image.copy()
+
             QMessageBox.information(self, "Control Net", "Control Net processing completed.")
             if self.detection_enabled:
                 self.update_detection()
+
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
 
@@ -478,6 +526,7 @@ class MainWindow(QMainWindow):
         if has_alpha:
             alpha_channel = frame[:, :, 3]
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
         try:
             from providers.yolo_detection_provider import detect_objects, group_objects, select_focus_object
             objects = detect_objects(frame, alpha_channel)
@@ -486,6 +535,7 @@ class MainWindow(QMainWindow):
                     self.view.scene.removeItem(self.view.detection_overlay_item)
                     self.view.detection_overlay_item = None
                 return
+
             grouped_clusters = group_objects(objects)
             focus_group = select_focus_object(grouped_clusters, frame.shape)
             overlay = np.zeros((height, width, 4), dtype=np.uint8)
@@ -513,6 +563,7 @@ class MainWindow(QMainWindow):
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, blue, 1, cv2.LINE_AA)
                 x1, y1, x2, y2 = focus_group["bbox"]
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), red, thickness=3)
+
             q_image = QImage(overlay.data, width, height, width * 4, QImage.Format.Format_RGBA8888)
             overlay_pixmap = QPixmap.fromImage(q_image)
             if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
@@ -524,6 +575,7 @@ class MainWindow(QMainWindow):
                 self.view.detection_overlay_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
                 self.view.scene.addItem(self.view.detection_overlay_item)
                 self.view.detection_overlay_item.setPos(self.view.main_pixmap_item.pos())
+
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
