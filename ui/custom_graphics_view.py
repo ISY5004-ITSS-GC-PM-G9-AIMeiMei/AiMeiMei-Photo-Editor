@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import torch
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy, QGraphicsPathItem
 from PyQt6.QtGui import QPixmap, QPainter, QImage, QPainterPath, QPen, QColor, QBrush
 from PyQt6.QtCore import Qt, QBuffer, QIODevice
 from providers.sam_model_provider import SAMModelProvider
@@ -18,11 +18,11 @@ class CustomGraphicsView(QGraphicsView):
         self.selection_feedback_items = []    # For drawing contour feedback
         self.dragging = False
 
-        # Modes: "transform" and "selection"
+        # Modes: "transform", "object selection", "quick selection"
         self.mode = "transform"
         self.positive_points = []             # For SAM prompt-based selection
         self.negative_points = []             # For SAM prompt-based selection
-        self.u2net_selection_mask = None       # Binary mask from U2Net auto selection
+        self.u2net_selection_mask = None      # Binary mask from U2Net auto selection
         self.image_shape = None               # (height, width) of current image
 
         # OpenCV images (BGR)
@@ -234,25 +234,25 @@ class CustomGraphicsView(QGraphicsView):
         self.selected_pixmap_item.setZValue(10)
         self.scene.addItem(self.selected_pixmap_item)
 
-        for item in self.selection_feedback_items:
-            self.scene.removeItem(item)
+        # Clear previous feedback items; new ones will be children of selected_pixmap_item.
         self.selection_feedback_items = []
 
         outline_path = self._get_outline_path(self.u2net_selection_mask)
 
-        white_pen = QPen(QColor("white"), 4)
-        item_white = self.scene.addPath(outline_path, white_pen)
+        # Create feedback items as children of selected_pixmap_item so they move together.
+        white_pen = QPen(QColor("white"), 2)
+        item_white = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
+        item_white.setPen(white_pen)
 
-        black_pen = QPen(QColor("black"), 2)
-        item_black = self.scene.addPath(outline_path, black_pen)
+        black_pen = QPen(QColor("black"), 1)
+        item_black = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
+        item_black.setPen(black_pen)
 
         self.selection_feedback_items = [item_white, item_black]
 
     def apply_merge(self):
-        if not self.selected_pixmap_item and (self.u2net_selection_mask is None or np.count_nonzero(self.u2net_selection_mask) == 0):
+        if self.selected_pixmap_item is None and (self.u2net_selection_mask is None or np.count_nonzero(self.u2net_selection_mask) == 0):
             print("No active selection mask to merge.")
-            for item in self.selection_feedback_items:
-                self.scene.removeItem(item)
             self.selection_feedback_items = []
             return
 
@@ -268,12 +268,12 @@ class CustomGraphicsView(QGraphicsView):
         self.main_pixmap_item.setPixmap(merged_pixmap)
         self.scene_pixmap = merged_pixmap
 
+        # Remove the selected item (which will also remove its child feedback items)
         if self.selected_pixmap_item:
             self.scene.removeItem(self.selected_pixmap_item)
             self.selected_pixmap_item = None
 
-        for item in self.selection_feedback_items:
-            self.scene.removeItem(item)
+        # Since feedback items are children of selected_pixmap_item, clear the list without manual removal.
         self.selection_feedback_items = []
 
         self.u2net_selection_mask = np.zeros(self.image_shape, dtype=np.uint8)
@@ -300,10 +300,7 @@ class CustomGraphicsView(QGraphicsView):
                 print(f"Added negative point: ({pos.x()}, {pos.y()})")
             self.object_selection()
         elif self.mode == "quick selection":
-            if event.button() == Qt.MouseButton.LeftButton:
-                print("Add TODO")
-            elif event.button() == Qt.MouseButton.RightButton:
-                print("Minus TODO")
+            print("TODO")
         elif self.mode == "transform" and self.selected_pixmap_item:
             self.dragging = True
             self.drag_start = pos
