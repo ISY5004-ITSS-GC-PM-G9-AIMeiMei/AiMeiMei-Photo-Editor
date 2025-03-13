@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QScreen, QPixmap, QAction, QImage, QIcon
 from PyQt6.QtCore import Qt, QRect, QSize
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 from PIL.ImageQt import ImageQt
 
 # Custom modules
@@ -23,6 +23,7 @@ from ui.custom_graphics_view import CustomGraphicsView
 from ui.filter_panel_widget import FilterPanelWidget  # Refactored filter panel
 
 # Providers
+from simple_lama_inpainting import SimpleLama
 from providers.controlnet_model_provider import load_controlnet, make_divisible_by_8
 from providers.yolo_detection_provider import detect_objects, group_objects, select_focus_object
 from providers.realesrgan_provider import RealESRGANProvider
@@ -116,12 +117,6 @@ class MainWindow(QMainWindow):
         upscale_button.clicked.connect(self.upscale_image_action)
         layout.addWidget(upscale_button)
 
-        # --- U²‑Net Auto Salient Object Selection ---
-        auto_select_button = QPushButton("Auto Select Salient Object")
-        auto_select_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        auto_select_button.clicked.connect(self.u2net_auto_action)
-        layout.addWidget(auto_select_button)
-
         # --- Transform Mode and SAM Selection ---
         mode_map = {
             "Transform": "transform",
@@ -133,6 +128,12 @@ class MainWindow(QMainWindow):
             btn.clicked.connect(lambda checked, m=mode: self.set_mode_action(m))
             layout.addWidget(btn)
             self.mode_buttons[mode] = btn
+
+        # --- U²‑Net Auto Salient Object Selection ---
+        auto_select_button = QPushButton("Auto Select Salient Object")
+        auto_select_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        auto_select_button.clicked.connect(self.u2net_auto_action)
+        layout.addWidget(auto_select_button)
 
         # --- Lama Inpainting Button ---
         lama_inpaint_button = QPushButton("Lama Inpaint")
@@ -450,8 +451,63 @@ class MainWindow(QMainWindow):
     # Feature: Lama Inpainting
     # ============================
     def lama_inpaint_action(self):
-        print("TODO")
+        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+            QMessageBox.warning(self, "Lama Inpaint", "No image loaded for inpainting.")
+            return
 
+        try:
+            # Convert the current cv image (BGR/BGRA) to a PIL Image in RGBA mode.
+            cv_img = self.view.cv_image
+            if len(cv_img.shape) == 3:
+                if cv_img.shape[2] == 3:
+                    # Convert from BGR to RGB, then to RGBA.
+                    rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+                    pil_image = Image.fromarray(rgb_image).convert("RGBA")
+                elif cv_img.shape[2] == 4:
+                    # Convert from BGRA to RGBA.
+                    rgba_image = cv2.cvtColor(cv_img, cv2.COLOR_BGRA2RGBA)
+                    pil_image = Image.fromarray(rgba_image)
+                else:
+                    QMessageBox.warning(self, "Lama Inpaint", "Unsupported image format.")
+                    return
+            else:
+                QMessageBox.warning(self, "Lama Inpaint", "Unsupported image format.")
+                return
+
+            # Ensure the image has an alpha channel.
+            if pil_image.mode != "RGBA":
+                QMessageBox.warning(self, "Lama Inpaint",
+                                    "Image does not have an alpha channel. Please provide an image with transparency.")
+                return
+
+            # Extract the alpha channel and invert it to create the inpainting mask.
+            alpha = pil_image.split()[3]
+            mask = ImageOps.invert(alpha.convert("L"))
+
+            # Instantiate SimpleLama.
+            simple_lama = SimpleLama()
+
+            # Inpaint using the RGB version of the image along with the mask.
+            result = simple_lama(pil_image.convert("RGB"), mask)
+
+            # Convert the result to a QPixmap.
+            qimage = ImageQt(result)
+            pixmap = QPixmap.fromImage(qimage)
+            self.view.main_pixmap_item.setPixmap(pixmap)
+            self.view.background_pixmap = pixmap
+
+            # Convert the inpainted result to a numpy array (BGR) and update the view's image data.
+            result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
+            self.view.cv_image = result_np
+            self.view.base_cv_image = self.view.cv_image.copy()
+
+            # Sync the updated image conversions.
+            self.view._update_cv_image_conversions()
+
+            QMessageBox.information(self, "Lama Inpaint", "Lama inpainting completed.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Lama Inpaint Error", f"An error occurred during inpainting:\n{str(e)}")
 
     # ============================
     # Feature: Control Net Processing
@@ -528,9 +584,3 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
 
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
