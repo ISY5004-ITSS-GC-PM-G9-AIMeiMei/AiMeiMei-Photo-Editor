@@ -110,6 +110,12 @@ class MainWindow(QMainWindow):
         self.detection_toggle_button.clicked.connect(self.toggle_detection_action)
         layout.addWidget(self.detection_toggle_button)
 
+        # --- 4k Resolution Upscaling ---
+        upscale_button = QPushButton("4k Resolution")
+        upscale_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        upscale_button.clicked.connect(self.upscale_image_action)
+        layout.addWidget(upscale_button)
+
         # --- U²‑Net Auto Salient Object Selection ---
         auto_select_button = QPushButton("Auto Select Salient Object")
         auto_select_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -128,23 +134,23 @@ class MainWindow(QMainWindow):
             layout.addWidget(btn)
             self.mode_buttons[mode] = btn
 
-        # --- SAM: Deselect Selection ---
-        deselect_button = QPushButton("Deselect Selection")
-        deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        deselect_button.clicked.connect(self.apply_action)
-        layout.addWidget(deselect_button)
-
-        # --- 4k Resolution Upscaling ---
-        upscale_button = QPushButton("4k Resolution")
-        upscale_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        upscale_button.clicked.connect(self.upscale_image_action)
-        layout.addWidget(upscale_button)
+        # --- Lama Inpainting Button ---
+        lama_inpaint_button = QPushButton("Lama Inpaint")
+        lama_inpaint_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        lama_inpaint_button.clicked.connect(self.lama_inpaint_action)
+        layout.addWidget(lama_inpaint_button)
 
         # --- Control Net Processing ---
         controlnet_generate_button = QPushButton("Control Net Generate")
         controlnet_generate_button.setCursor(Qt.CursorShape.PointingHandCursor)
         controlnet_generate_button.clicked.connect(self.control_net_action)
         layout.addWidget(controlnet_generate_button)
+
+        # --- Deselect Selection ---
+        deselect_button = QPushButton("Deselect Selection")
+        deselect_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        deselect_button.clicked.connect(self.apply_action)
+        layout.addWidget(deselect_button)
 
         layout.addStretch(1)
 
@@ -366,6 +372,35 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
     # ============================
+    # Feature: 4k Resolution Upscaling
+    # ============================
+    def upscale_image_action(self):
+        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
+            QMessageBox.warning(self, "4k Resolution", "No image loaded for upscaling.")
+            return
+        try:
+            current_image = self.view.cv_image.copy()
+            upscaled_image = RealESRGANProvider.upscale(current_image)
+            self.view.cv_image = upscaled_image
+            self.view.base_cv_image = upscaled_image.copy()
+            self.view._update_cv_image_conversions()
+
+            h, w, ch = self.view.cv_image_rgba.shape
+            bytes_per_line = ch * w
+            qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+            pixmap = QPixmap.fromImage(qimage)
+            self.view.main_pixmap_item.setPixmap(pixmap)
+            self.view.setSceneRect(self.view.main_pixmap_item.boundingRect())
+            self.view.fitInView(self.view.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+            QMessageBox.information(self, "4k Resolution", "Image successfully upscaled.")
+            RealESRGANProvider._instance = None
+            torch.cuda.empty_cache()
+            print("RealESRGAN resources cleaned up.")
+        except Exception as e:
+            QMessageBox.critical(self, "Upscale Error", f"An error occurred during upscaling: {str(e)}")
+
+    # ============================
     # Feature: U²‑Net Salient Object Segmentation
     # ============================
     def u2net_auto_action(self):
@@ -412,33 +447,11 @@ class MainWindow(QMainWindow):
             btn.setStyleSheet("background-color: #87CEFA;" if mode == active_mode else "")
 
     # ============================
-    # Feature: 4k Resolution Upscaling
+    # Feature: Lama Inpainting
     # ============================
-    def upscale_image_action(self):
-        if not hasattr(self.view, 'cv_image') or self.view.cv_image is None:
-            QMessageBox.warning(self, "4k Resolution", "No image loaded for upscaling.")
-            return
-        try:
-            current_image = self.view.cv_image.copy()
-            upscaled_image = RealESRGANProvider.upscale(current_image)
-            self.view.cv_image = upscaled_image
-            self.view.base_cv_image = upscaled_image.copy()
-            self.view._update_cv_image_conversions()
+    def lama_inpaint_action(self):
+        print("TODO")
 
-            h, w, ch = self.view.cv_image_rgba.shape
-            bytes_per_line = ch * w
-            qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
-            pixmap = QPixmap.fromImage(qimage)
-            self.view.main_pixmap_item.setPixmap(pixmap)
-            self.view.setSceneRect(self.view.main_pixmap_item.boundingRect())
-            self.view.fitInView(self.view.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-
-            QMessageBox.information(self, "4k Resolution", "Image successfully upscaled.")
-            RealESRGANProvider._instance = None
-            torch.cuda.empty_cache()
-            print("RealESRGAN resources cleaned up.")
-        except Exception as e:
-            QMessageBox.critical(self, "Upscale Error", f"An error occurred during upscaling: {str(e)}")
 
     # ============================
     # Feature: Control Net Processing
