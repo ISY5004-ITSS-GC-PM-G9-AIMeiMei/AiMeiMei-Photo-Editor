@@ -48,10 +48,10 @@ class MainWindow(QMainWindow):
         # Separate timers:
         self.detection_timer = QTimer(self)
         self.detection_timer.timeout.connect(self.safe_update_detection)
-        self.detection_timer.start(1000)  # every 1 second
+        self.detection_timer.start(30000)  # every 30 second
         self.score_timer = QTimer(self)
         self.score_timer.timeout.connect(self.safe_update_score)
-        self.score_timer.start(1000)  # every 1 second
+        self.score_timer.start(30000)  # every 30 second
 
     def initUI(self):
         self.setWindowTitle("Image Editor")
@@ -612,7 +612,7 @@ class MainWindow(QMainWindow):
                 # Colors
                 blue = (0, 0, 255, 255)
                 red = (255, 0, 0, 255)
-                scale_factor = 0.95
+                scale_factor = 0.99
 
                 # Draw bounding boxes
                 for member in focus_group.get("members", []):
