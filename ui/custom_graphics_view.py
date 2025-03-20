@@ -31,7 +31,7 @@ class CustomGraphicsView(QGraphicsView):
 
         # OpenCV images (BGRA)
         self.current_cv_image = None  # Current working image
-        self.detection_cv_image = None  # For re-applying detection
+        self.detection_cv_image = None  # Composite detection image (includes current selection)
 
         # QImage (RGBA) conversion of current_cv_image
         self.display_cv_image = None
@@ -82,6 +82,9 @@ class CustomGraphicsView(QGraphicsView):
             self.sam_cv_image_rgb = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGRA2RGB)
         else:
             self.sam_cv_image_rgb = cv2.cvtColor(self.sam_cv_image, cv2.COLOR_BGR2RGB)
+
+        # Update the detection composite whenever conversions update
+        self.update_detection_composite()
 
         if self.score_update_callback is not None:
             self.score_update_callback()
@@ -140,6 +143,10 @@ class CustomGraphicsView(QGraphicsView):
         if self.current_cv_image is None:
             print(f"Error: Could not load image from {image_path}")
             return
+
+        # Initialize the selection mask to zeros (preserving any transparency already in the image)
+        h, w = self.current_cv_image.shape[:2]
+        self.u2net_selection_mask = np.zeros((h, w), dtype=np.uint8)
 
         self.detection_cv_image = self.current_cv_image.copy()
 
@@ -316,12 +323,8 @@ class CustomGraphicsView(QGraphicsView):
     def update_display(self):
         if self.current_cv_image is None or self.u2net_selection_mask is None:
             return
-        # Ensure RGBA conversion is updated
         if self.display_cv_image is None:
             self._update_cv_image_conversions()
-        if self.display_cv_image is None:
-            print("display_cv_image is still None, cannot update selection display.")
-            return
 
         if self.selected_pixmap_item:
             self.scene.removeItem(self.selected_pixmap_item)
@@ -330,9 +333,10 @@ class CustomGraphicsView(QGraphicsView):
             self.scene.removeItem(item)
         self.selection_feedback_items = []
 
+        # Preserve the original alpha from display_cv_image
         bg_rgba = self.display_cv_image.copy()
-        bg_alpha = np.where(self.u2net_selection_mask == 255, 0, 255).astype(np.uint8)
-        bg_rgba[:, :, 3] = bg_alpha
+        orig_alpha = self.display_cv_image[..., 3].copy() if self.display_cv_image.shape[2] == 4 else np.full((self.image_shape[0], self.image_shape[1]), 255, dtype=np.uint8)
+        bg_rgba[..., 3] = np.where(self.u2net_selection_mask == 255, 0, orig_alpha)
 
         h, w, ch = bg_rgba.shape
         bytes_per_line = ch * w
@@ -340,18 +344,17 @@ class CustomGraphicsView(QGraphicsView):
         bg_pixmap = QPixmap.fromImage(bg_qimage)
         self.background_pixmap_item.setPixmap(bg_pixmap)
 
+        # Create foreground image showing only the selected region
         sel_rgba = self.display_cv_image.copy()
         sel_rgba[self.u2net_selection_mask != 255] = [0, 0, 0, 0]
         sel_qimage = QImage(sel_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         sel_pixmap = QPixmap.fromImage(sel_qimage)
-
         if self.selected_pixmap_item:
             self.scene.removeItem(self.selected_pixmap_item)
         self.selected_pixmap_item = QGraphicsPixmapItem(sel_pixmap)
         self.selected_pixmap_item.setZValue(10)
         self.scene.addItem(self.selected_pixmap_item)
 
-        self.selection_feedback_items = []
         outline_path = self._get_outline_path(self.u2net_selection_mask)
         white_pen = QPen(QColor("white"), 2)
         item_white = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
@@ -360,6 +363,44 @@ class CustomGraphicsView(QGraphicsView):
         item_black = QGraphicsPathItem(outline_path, self.selected_pixmap_item)
         item_black.setPen(black_pen)
         self.selection_feedback_items = [item_white, item_black]
+
+        # Update the detection composite so that detection_cv_image reflects the current selection
+        self.update_detection_composite()
+
+    def alpha_composite(self, bg, fg):
+        """
+        Composite fg over bg using per-pixel alpha blending.
+        Both bg and fg are assumed to be RGBA uint8 numpy arrays.
+        """
+        bg = bg.astype(np.float32) / 255.0
+        fg = fg.astype(np.float32) / 255.0
+        alpha_fg = fg[..., 3:4]
+        alpha_bg = bg[..., 3:4]
+        out_alpha = alpha_fg + alpha_bg * (1 - alpha_fg)
+        out_rgb = (fg[..., :3] * alpha_fg + bg[..., :3] * alpha_bg * (1 - alpha_fg)) / (out_alpha + 1e-6)
+        out = np.concatenate([out_rgb, out_alpha], axis=2)
+        out = (np.clip(out, 0, 1) * 255).astype(np.uint8)
+        return out
+
+    def update_detection_composite(self):
+        """
+        Create a composite image that includes the current selection overlay.
+        The result is stored in self.detection_cv_image.
+        """
+        if self.display_cv_image is None or self.u2net_selection_mask is None:
+            return
+
+        # Background: use original image but make selected areas transparent
+        bg_rgba = self.display_cv_image.copy()
+        orig_alpha = self.display_cv_image[..., 3].copy() if self.display_cv_image.shape[2] == 4 else np.full((self.image_shape[0], self.image_shape[1]), 255, dtype=np.uint8)
+        bg_rgba[..., 3] = np.where(self.u2net_selection_mask == 255, 0, orig_alpha)
+
+        # Foreground: only the selected region (rest transparent)
+        sel_rgba = self.display_cv_image.copy()
+        sel_rgba[self.u2net_selection_mask != 255] = [0, 0, 0, 0]
+
+        composite = self.alpha_composite(bg_rgba, sel_rgba)
+        self.detection_cv_image = composite
 
     def apply_merge(self):
         if self.selected_pixmap_item is None and (

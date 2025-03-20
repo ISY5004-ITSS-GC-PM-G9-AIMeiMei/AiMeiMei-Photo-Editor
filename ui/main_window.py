@@ -599,11 +599,16 @@ class MainWindow(QMainWindow):
 
     def update_score(self):
         try:
-            if self.view.current_cv_image is None or len(self.view.current_cv_image.shape) < 3:
+            # Use the composite detection image (if available) for scoring
+            if self.view.detection_cv_image is not None:
+                frame = self.view.detection_cv_image
+            else:
+                frame = self.view.current_cv_image
+
+            if frame is None or len(frame.shape) < 3:
                 self.score_label.setText("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
                 return
 
-            frame = self.view.current_cv_image
             objects = detect_objects(frame)
             if objects:
                 grouped_clusters = group_objects(objects)
@@ -657,6 +662,7 @@ class MainWindow(QMainWindow):
         sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
 
         self.view.current_cv_image = sharpened
+        self.view.detection_cv_image = self.view.current_cv_image.copy()
         self.view._update_cv_image_conversions()
 
         h, w, ch = self.view.display_cv_image.shape
@@ -695,18 +701,11 @@ class MainWindow(QMainWindow):
 
             # Check if image has an alpha channel (transparency)
             if current_image.shape[2] == 4:
-                # Separate RGB and alpha channels
                 rgb_image = current_image[:, :, :3]
                 alpha_channel = current_image[:, :, 3]
-
-                # Upscale RGB using RealESRGAN
                 upscaled_rgb = RealESRGANProvider.upscale(rgb_image)
-
-                # Upscale alpha channel using cv2.resize (or any interpolation you prefer)
                 new_size = (upscaled_rgb.shape[1], upscaled_rgb.shape[0])
                 upscaled_alpha = cv2.resize(alpha_channel, new_size, interpolation=cv2.INTER_LINEAR)
-
-                # Merge upscaled RGB and alpha channels
                 upscaled_image = np.dstack((upscaled_rgb, upscaled_alpha))
             else:
                 upscaled_image = RealESRGANProvider.upscale(current_image)
@@ -738,7 +737,6 @@ class MainWindow(QMainWindow):
             threshold_value = self.u2net_threshold_spin.value()
             mask = U2NetProvider.get_salient_mask(self.view.current_cv_image, threshold=threshold_value)
             self.view.u2net_selection_mask = mask
-            # Ensure the RGBA conversion is updated before using it.
             self.view._update_cv_image_conversions()
             self.view.update_display()
             QMessageBox.information(self, "Auto Salient Object", "Salient object segmentation completed.")
@@ -892,4 +890,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
 
-
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
