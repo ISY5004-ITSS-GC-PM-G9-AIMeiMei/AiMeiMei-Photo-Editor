@@ -60,7 +60,147 @@ class CustomGraphicsView(QGraphicsView):
         self.clone_stamp_overlay = None
         self.clone_source_overlay = None
 
-        # Removed score_update_callback since real-time update is managed by MainWindow
+    def get_state(self):
+        """Return a dictionary capturing the complete state of the view."""
+        state = {}
+        # Save basic state variables
+        state['mode'] = self.mode
+        state['positive_points'] = list(self.positive_points)
+        state['negative_points'] = list(self.negative_points)
+        state['selection_mask'] = np.copy(self.selection_mask) if self.selection_mask is not None else None
+        state['image_shape'] = self.image_shape
+        state['current_cv_image'] = np.copy(self.current_cv_image) if self.current_cv_image is not None else None
+        state['detection_cv_image'] = np.copy(self.detection_cv_image) if self.detection_cv_image is not None else None
+        state['display_cv_image'] = np.copy(self.display_cv_image) if self.display_cv_image is not None else None
+        state['sam_cv_image'] = np.copy(self.sam_cv_image) if self.sam_cv_image is not None else None
+        state['sam_cv_image_rgb'] = np.copy(self.sam_cv_image_rgb) if self.sam_cv_image_rgb is not None else None
+        state['quick_select_brush_size'] = self.quick_select_brush_size
+        state['clone_stamp_brush_size'] = self.clone_stamp_brush_size
+        state['clone_source_point'] = self.clone_source_point
+        state['clone_offset'] = self.clone_offset
+
+        # Save background pixmap info (if available)
+        if self.background_pixmap_item is not None:
+            # Copy the QPixmap; note that QPixmap.copy() creates a duplicate pixmap.
+            state[
+                'background_pixmap'] = self.background_pixmap_item.pixmap().copy() if self.background_pixmap_item.pixmap() is not None else None
+            state['background_position'] = self.background_pixmap_item.pos()
+        else:
+            state['background_pixmap'] = None
+            state['background_position'] = None
+
+        # Save detection overlay info
+        if self.detection_overlay_item is not None:
+            state['detection_overlay_pixmap'] = self.detection_overlay_item.pixmap().copy()
+            state['detection_overlay_position'] = self.detection_overlay_item.pos()
+        else:
+            state['detection_overlay_pixmap'] = None
+            state['detection_overlay_position'] = None
+
+        # Save quick selection overlay geometry
+        if self.quick_selection_overlay is not None:
+            state['quick_selection_rect'] = self.quick_selection_overlay.rect()
+        else:
+            state['quick_selection_rect'] = None
+
+        # Save clone stamp overlays geometry
+        if self.clone_stamp_overlay is not None:
+            state['clone_stamp_rect'] = self.clone_stamp_overlay.rect()
+        else:
+            state['clone_stamp_rect'] = None
+
+        if self.clone_source_overlay is not None:
+            state['clone_source_rect'] = self.clone_source_overlay.rect()
+        else:
+            state['clone_source_rect'] = None
+
+        # Save view transformation (zoom, pan)
+        state['view_transform'] = self.transform()
+        return state
+
+    def set_state(self, state):
+        """Restore the state from the given dictionary."""
+        self.mode = state.get('mode', "transform")
+        self.positive_points = state.get('positive_points', [])
+        self.negative_points = state.get('negative_points', [])
+        self.selection_mask = np.copy(state['selection_mask']) if state.get('selection_mask') is not None else None
+        self.image_shape = state.get('image_shape')
+        self.current_cv_image = np.copy(state['current_cv_image']) if state.get(
+            'current_cv_image') is not None else None
+        self.detection_cv_image = np.copy(state['detection_cv_image']) if state.get(
+            'detection_cv_image') is not None else None
+        self.display_cv_image = np.copy(state['display_cv_image']) if state.get(
+            'display_cv_image') is not None else None
+        self.sam_cv_image = np.copy(state['sam_cv_image']) if state.get('sam_cv_image') is not None else None
+        self.sam_cv_image_rgb = np.copy(state['sam_cv_image_rgb']) if state.get(
+            'sam_cv_image_rgb') is not None else None
+        self.quick_select_brush_size = state.get('quick_select_brush_size', 5)
+        self.clone_stamp_brush_size = state.get('clone_stamp_brush_size', 5)
+        self.clone_source_point = state.get('clone_source_point')
+        self.clone_offset = state.get('clone_offset')
+
+        # Restore background pixmap item
+        if state.get('background_pixmap') is not None:
+            pixmap = state['background_pixmap']
+            if self.background_pixmap_item is None:
+                from PyQt6.QtWidgets import QGraphicsPixmapItem
+                self.background_pixmap_item = QGraphicsPixmapItem(pixmap)
+                self.scene.addItem(self.background_pixmap_item)
+            else:
+                self.background_pixmap_item.setPixmap(pixmap)
+            if state.get('background_position') is not None:
+                self.background_pixmap_item.setPos(state['background_position'])
+
+        # Restore detection overlay
+        if state.get('detection_overlay_pixmap') is not None:
+            pixmap = state['detection_overlay_pixmap']
+            if self.detection_overlay_item is None:
+                from PyQt6.QtWidgets import QGraphicsPixmapItem
+                self.detection_overlay_item = QGraphicsPixmapItem(pixmap)
+                self.scene.addItem(self.detection_overlay_item)
+            else:
+                self.detection_overlay_item.setPixmap(pixmap)
+            if state.get('detection_overlay_position') is not None:
+                self.detection_overlay_item.setPos(state['detection_overlay_position'])
+
+        # Restore quick selection overlay
+        if state.get('quick_selection_rect') is not None:
+            if self.quick_selection_overlay is None:
+                from PyQt6.QtWidgets import QGraphicsEllipseItem
+                self.quick_selection_overlay = QGraphicsEllipseItem()
+                self.scene.addItem(self.quick_selection_overlay)
+            self.quick_selection_overlay.setRect(state['quick_selection_rect'])
+        else:
+            if self.quick_selection_overlay is not None:
+                self.scene.removeItem(self.quick_selection_overlay)
+                self.quick_selection_overlay = None
+
+        # Restore clone stamp overlays
+        if state.get('clone_stamp_rect') is not None:
+            if self.clone_stamp_overlay is None:
+                from PyQt6.QtWidgets import QGraphicsEllipseItem
+                self.clone_stamp_overlay = QGraphicsEllipseItem()
+                self.scene.addItem(self.clone_stamp_overlay)
+            self.clone_stamp_overlay.setRect(state['clone_stamp_rect'])
+        else:
+            if self.clone_stamp_overlay is not None:
+                self.scene.removeItem(self.clone_stamp_overlay)
+                self.clone_stamp_overlay = None
+
+        if state.get('clone_source_rect') is not None:
+            if self.clone_source_overlay is None:
+                from PyQt6.QtWidgets import QGraphicsEllipseItem
+                self.clone_source_overlay = QGraphicsEllipseItem()
+                self.scene.addItem(self.clone_source_overlay)
+            self.clone_source_overlay.setRect(state['clone_source_rect'])
+        else:
+            if self.clone_source_overlay is not None:
+                self.scene.removeItem(self.clone_source_overlay)
+                self.clone_source_overlay = None
+
+        # Restore view transformation (zoom, pan)
+        if state.get('view_transform') is not None:
+            self.setTransform(state['view_transform'])
 
     def apply_contrast_and_sharpen(self, image):
         contrast_image = cv2.convertScaleAbs(image, alpha=1.3, beta=0)

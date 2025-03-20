@@ -36,6 +36,8 @@ from providers.score_provider import calculate_photo_score
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.undo_stack = []  # List to store previous image states
+        self.max_undo = 10  # Maximum history size
         self.current_file = None
         self.mode_buttons = {}
         self.detection_enabled = False
@@ -488,6 +490,25 @@ class MainWindow(QMainWindow):
         file_path, _ = file_dialog.getSaveFileName(self, "Save Image As", "", "Image Files (*.png *.jpg *.bmp)")
         if file_path:
             self.view.save(file_path)
+
+    def save_undo_state(self):
+        """Save a snapshot of the complete CustomGraphicsView state."""
+        state = self.view.get_state()
+        self.undo_stack.append(state)
+        if len(self.undo_stack) > self.max_undo:
+            self.undo_stack.pop(0)
+
+    def undo_action(self):
+        """Revert to the most recent saved state of the view."""
+        if self.undo_stack:
+            state = self.undo_stack.pop()
+            self.view.set_state(state)
+            # Optionally, update image conversions and overlays
+            self.view.update_all_cv_image_conversions()
+            self.view.update_detection_composite()
+            QMessageBox.information(self, "Undo", "Undo applied.")
+        else:
+            QMessageBox.information(self, "Undo", "No undo history available.")
 
     def create_menu_bar(self):
         menubar = self.menuBar()
