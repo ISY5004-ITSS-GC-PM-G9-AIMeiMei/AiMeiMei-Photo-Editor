@@ -13,15 +13,15 @@ from PyQt6.QtWidgets import (
     QScrollArea, QListWidget, QListWidgetItem, QGraphicsPixmapItem,
     QGroupBox, QDoubleSpinBox, QSpinBox, QSlider
 )
-from PyQt6.QtGui import QScreen, QPixmap, QAction, QImage, QIcon
-from PyQt6.QtCore import Qt, QRect, QSize
+from PyQt6.QtGui import QScreen, QPixmap, QAction, QImage, QIcon, QBrush, QPen, QPainter
+from PyQt6.QtCore import Qt, QRect, QSize, QTimer, QBuffer, QIODevice
 
 from PIL import Image, ImageOps
 from PIL.ImageQt import ImageQt
 
 # Custom modules
 from ui.custom_graphics_view import CustomGraphicsView
-from ui.filter_panel_widget import FilterPanelWidget  # Assumes you have this module
+from ui.filter_panel_widget import FilterPanelWidget
 
 # Providers
 from simple_lama_inpainting import SimpleLama
@@ -41,18 +41,25 @@ class MainWindow(QMainWindow):
         self.detection_enabled = False
         self.reference_dir = os.path.join("images", "reference_images")
         os.makedirs(self.reference_dir, exist_ok=True)
+        # Flag to block updates during heavy operations
+        self.action_in_progress = False
         self.initUI()
+
+        # Separate timers:
+        self.detection_timer = QTimer(self)
+        self.detection_timer.timeout.connect(self.safe_update_detection)
+        self.detection_timer.start(1000)  # every 1 second
+        self.score_timer = QTimer(self)
+        self.score_timer.timeout.connect(self.safe_update_score)
+        self.score_timer.start(100)  # every 100 ms
 
     def initUI(self):
         self.setWindowTitle("Image Editor")
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
 
-        # --- Top Section ---
         self.init_top_section(main_layout)
-        # --- Center Section ---
         self.init_center_section(main_layout)
-        # --- Bottom Section ---
         self.init_bottom_section(main_layout)
 
         self.setCentralWidget(central_widget)
@@ -73,17 +80,17 @@ class MainWindow(QMainWindow):
         center_widget = QWidget()
         center_layout = QHBoxLayout(center_widget)
 
-        # Left: Button Panel
+        # Left Button Panel
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         self.init_left_buttons(left_layout)
 
-        # Center: Image View
+        # Center Image View
         self.view = CustomGraphicsView()
-        self.view.score_update_callback = self.update_score
+        self.view.score_update_callback = None
 
-        # Right: Filter Panel Widget
+        # Right Filter Panel
         self.filter_panel = FilterPanelWidget(self.view)
 
         center_layout.addWidget(left_panel, 15)
@@ -162,8 +169,9 @@ class MainWindow(QMainWindow):
         deselect_button.clicked.connect(self.apply_action)
         button_layout.addWidget(deselect_button)
 
-        config_widget = self.build_config_settings_widget()
         layout.addWidget(button_container, 5)
+        # Add configuration panel next to buttons
+        config_widget = self.build_config_settings_widget()
         layout.addWidget(config_widget, 5)
 
     def build_config_settings_widget(self):
@@ -173,7 +181,6 @@ class MainWindow(QMainWindow):
         # Lighting Adjustments Group
         lighting_group = QGroupBox("Lighting Adjustments")
         lighting_layout = QVBoxLayout(lighting_group)
-
         brightness_layout = QHBoxLayout()
         brightness_label = QLabel("Brightness Factor:")
         self.lighting_brightness_slider = QSlider(Qt.Orientation.Horizontal)
@@ -277,7 +284,6 @@ class MainWindow(QMainWindow):
         sam_layout.addWidget(sam_iou_label)
         sam_layout.addWidget(self.sam_iou_spin)
         config_layout.addWidget(sam_config_group)
-        sam_config_group.setLayout(sam_layout)
 
         # U2Net Configuration
         u2net_config_group = QGroupBox("Salient Object Selection (U2Net) Configuration")
@@ -434,6 +440,45 @@ class MainWindow(QMainWindow):
         reference_vlayout.addWidget(self.reference_list_widget)
         layout.addWidget(reference_container, 1)
 
+    def refresh_reference_list(self):
+        self.reference_list_widget.clear()
+        if os.path.exists(self.reference_dir):
+            for file in os.listdir(self.reference_dir):
+                file_path = os.path.join(self.reference_dir, file)
+                if os.path.isfile(file_path):
+                    icon = QIcon(QPixmap(file_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio,
+                                                           Qt.TransformationMode.SmoothTransformation))
+                    item = QListWidgetItem(icon, file)
+                    item.setData(Qt.ItemDataRole.UserRole, file_path)
+                    self.reference_list_widget.addItem(item)
+
+    def add_reference_images(self):
+        file_dialog = QFileDialog(self)
+        file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
+        file_dialog.setNameFilter("Image Files (*.png *.jpg *.jpeg *.bmp *.gif)")
+        if file_dialog.exec():
+            files = file_dialog.selectedFiles()
+            for file in files:
+                basename = os.path.basename(file)
+                destination = os.path.join(self.reference_dir, basename)
+                if os.path.exists(destination):
+                    destination = os.path.join(self.reference_dir, f"{uuid.uuid4().hex}_{basename}")
+                try:
+                    shutil.copy(file, destination)
+                except Exception as e:
+                    print(f"Error copying file {file} to {destination}: {e}")
+            self.refresh_reference_list()
+
+    def delete_selected_reference_images(self):
+        selected_items = self.reference_list_widget.selectedItems()
+        for item in selected_items:
+            file_path = item.data(Qt.ItemDataRole.UserRole)
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Failed to delete {file_path}: {e}")
+        self.refresh_reference_list()
+
     def open_image(self):
         file_dialog = QFileDialog()
         image_file, _ = file_dialog.getOpenFileName(self, "Open Image", "", "Image Files (*.png *.jpg *.bmp)")
@@ -486,61 +531,37 @@ class MainWindow(QMainWindow):
     def restore_default_prompt(self):
         self.prompt_field.setPlainText(self.default_prompt)
 
-    def refresh_reference_list(self):
-        self.reference_list_widget.clear()
-        if os.path.exists(self.reference_dir):
-            for file in os.listdir(self.reference_dir):
-                file_path = os.path.join(self.reference_dir, file)
-                if os.path.isfile(file_path):
-                    icon = QIcon(QPixmap(file_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-                    item = QListWidgetItem(icon, file)
-                    item.setData(Qt.ItemDataRole.UserRole, file_path)
-                    self.reference_list_widget.addItem(item)
-
-    def add_reference_images(self):
-        file_dialog = QFileDialog(self)
-        file_dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
-        file_dialog.setNameFilter("Image Files (*.png *.jpg *.jpeg *.bmp *.gif)")
-        if file_dialog.exec():
-            files = file_dialog.selectedFiles()
-            for file in files:
-                basename = os.path.basename(file)
-                destination = os.path.join(self.reference_dir, basename)
-                if os.path.exists(destination):
-                    destination = os.path.join(self.reference_dir, f"{uuid.uuid4().hex}_{basename}")
-                try:
-                    shutil.copy(file, destination)
-                except Exception as e:
-                    print(f"Error copying file {file} to {destination}: {e}")
-            self.refresh_reference_list()
-
-    def delete_selected_reference_images(self):
-        selected_items = self.reference_list_widget.selectedItems()
-        for item in selected_items:
-            file_path = item.data(Qt.ItemDataRole.UserRole)
-            try:
-                os.remove(file_path)
-            except Exception as e:
-                print(f"Failed to delete {file_path}: {e}")
-        self.refresh_reference_list()
-
     def toggle_detection_action(self):
-        self.detection_enabled = not self.detection_enabled
-        if self.detection_enabled:
-            self.detection_toggle_button.setText("Detection: ON")
-            if hasattr(self.view, 'detection_cv_image') and self.view.detection_cv_image is not None:
+        if self.action_in_progress:
+            return
+        self.action_in_progress = True
+        try:
+            self.detection_enabled = not self.detection_enabled
+            if self.detection_enabled:
+                self.detection_toggle_button.setText("Detection: ON")
+                # If detection_cv_image is None, initialize it from current_cv_image
+                if self.view.current_cv_image is not None and self.view.detection_cv_image is None:
+                    self.view.detection_cv_image = self.view.current_cv_image.copy()
                 self.update_detection()
-        else:
-            self.detection_toggle_button.setText("Detection: OFF")
-            if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
-                self.view.scene.removeItem(self.view.detection_overlay_item)
-                self.view.detection_overlay_item = None
+            else:
+                self.detection_toggle_button.setText("Detection: OFF")
+                if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
+                    self.view.scene.removeItem(self.view.detection_overlay_item)
+                    self.view.detection_overlay_item = None
+                self.view.detection_cv_image = None
+        finally:
+            self.action_in_progress = False
 
     def update_detection(self):
+        if not hasattr(self.view, 'background_pixmap_item') or self.view.background_pixmap_item is None:
+            return
         if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
 
         frame = self.view.detection_cv_image.copy()
+        if frame.size == 0:
+            return
+
         height, width = frame.shape[:2]
         has_alpha = (frame.ndim == 3 and frame.shape[2] == 4)
         alpha_channel = frame[:, :, 3] if has_alpha else None
@@ -564,6 +585,10 @@ class MainWindow(QMainWindow):
                 scale_factor = 0.95
                 for member in focus_group.get("members", []):
                     bx1, by1, bx2, by2 = member["bbox"]
+                    bx1 = max(0, int(bx1))
+                    by1 = max(0, int(by1))
+                    bx2 = min(width, int(bx2))
+                    by2 = min(height, int(by2))
                     box_width = bx2 - bx1
                     box_height = by2 - by1
                     new_width = int(box_width * scale_factor)
@@ -581,6 +606,10 @@ class MainWindow(QMainWindow):
                     cv2.putText(overlay, debug_text, (new_bx1, new_by1 - 5),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, blue, 1, cv2.LINE_AA)
                 x1, y1, x2, y2 = focus_group["bbox"]
+                x1 = max(0, int(x1))
+                y1 = max(0, int(y1))
+                x2 = min(width, int(x2))
+                y2 = min(height, int(y2))
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), red, thickness=3)
 
             q_image = QImage(overlay.data, width, height, width * 4, QImage.Format.Format_RGBA8888)
@@ -592,14 +621,21 @@ class MainWindow(QMainWindow):
                 self.view.detection_overlay_item.setZValue(20)
                 self.view.detection_overlay_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
                 self.view.scene.addItem(self.view.detection_overlay_item)
+            if hasattr(self.view, 'background_pixmap_item') and self.view.background_pixmap_item is not None:
                 self.view.detection_overlay_item.setPos(self.view.background_pixmap_item.pos())
-
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
+    def safe_update_detection(self):
+        if self.detection_enabled and not self.action_in_progress:
+            self.update_detection()
+
+    def safe_update_score(self):
+        if not self.action_in_progress:
+            self.update_score()
+
     def update_score(self):
         try:
-            # Use the composite detection image (if available) for scoring
             if self.view.detection_cv_image is not None:
                 frame = self.view.detection_cv_image
             else:
@@ -609,14 +645,19 @@ class MainWindow(QMainWindow):
                 self.score_label.setText("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
                 return
 
-            objects = detect_objects(frame)
+            if frame.shape[2] == 4:
+                frame_for_score = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            else:
+                frame_for_score = frame
+
+            objects = detect_objects(frame_for_score)
             if objects:
                 grouped_clusters = group_objects(objects)
-                focus_object = select_focus_object(grouped_clusters, frame.shape)
+                focus_object = select_focus_object(grouped_clusters, frame_for_score.shape)
             else:
                 focus_object = None
 
-            score_data = calculate_photo_score(frame, [focus_object] if focus_object else [])
+            score_data = calculate_photo_score(frame_for_score, [focus_object] if focus_object else [])
             new_text = (
                 f"Aesthetic Score: {score_data['Final Score']} | "
                 f"Position: {score_data['Position']} | "
@@ -632,7 +673,6 @@ class MainWindow(QMainWindow):
     def updateLightingPreview(self):
         if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
-
         brightness = self.lighting_brightness_slider.value() / 100.0
         contrast = self.lighting_contrast_slider.value() / 100.0
         gamma = self.lighting_gamma_slider.value() / 100.0
@@ -641,10 +681,8 @@ class MainWindow(QMainWindow):
         image = np.power(image, 1.0 / gamma)
         image = np.clip(image * contrast * brightness, 0, 1)
         preview = (image * 255).astype(np.uint8)
-
         self.view.current_cv_image = preview
         self.view._update_cv_image_conversions()
-
         h, w, ch = self.view.display_cv_image.shape
         bytes_per_line = ch * w
         qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
@@ -654,17 +692,13 @@ class MainWindow(QMainWindow):
     def updateSharpenPreview(self):
         if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
-
         sharpen_amount = self.sharpen_slider.value() / 10.0
         image = self.view.detection_cv_image.astype(np.float32)
         blurred = cv2.GaussianBlur(image, (0, 0), sigmaX=3)
         sharpened = cv2.addWeighted(image, 1 + sharpen_amount, blurred, -sharpen_amount, 0)
         sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
-
         self.view.current_cv_image = sharpened
-        self.view.detection_cv_image = self.view.current_cv_image.copy()
         self.view._update_cv_image_conversions()
-
         h, w, ch = self.view.display_cv_image.shape
         bytes_per_line = ch * w
         qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
@@ -675,21 +709,18 @@ class MainWindow(QMainWindow):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Enhance Lighting", "No image loaded for enhancement.")
             return
-        self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Enhance Lighting", "Lighting enhancement applied.")
 
     def apply_filter_action(self):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Apply Filter", "No filter preview available.")
             return
-        self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Apply Filter", "Filter applied.")
 
     def sharpen_image_action(self):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Sharpen Image", "No image loaded for sharpening.")
             return
-        self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Sharpen Image", "Image sharpening applied.")
 
     def upscale_image_action(self):
@@ -698,8 +729,6 @@ class MainWindow(QMainWindow):
             return
         try:
             current_image = self.view.current_cv_image.copy()
-
-            # Check if image has an alpha channel (transparency)
             if current_image.shape[2] == 4:
                 rgb_image = current_image[:, :, :3]
                 alpha_channel = current_image[:, :, 3]
@@ -709,11 +738,8 @@ class MainWindow(QMainWindow):
                 upscaled_image = np.dstack((upscaled_rgb, upscaled_alpha))
             else:
                 upscaled_image = RealESRGANProvider.upscale(current_image)
-
             self.view.current_cv_image = upscaled_image
-            self.view.detection_cv_image = upscaled_image.copy()
             self.view._update_cv_image_conversions()
-
             h, w, ch = self.view.display_cv_image.shape
             bytes_per_line = ch * w
             qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
@@ -721,21 +747,28 @@ class MainWindow(QMainWindow):
             self.view.background_pixmap_item.setPixmap(pixmap)
             self.view.setSceneRect(self.view.background_pixmap_item.boundingRect())
             self.view.fitInView(self.view.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-
             QMessageBox.information(self, "4k Resolution", "Image successfully upscaled.")
             RealESRGANProvider._instance = None
             torch.cuda.empty_cache()
             print("RealESRGAN resources cleaned up.")
+            if self.detection_enabled:
+                self.update_detection()
         except Exception as e:
             QMessageBox.critical(self, "Upscale Error", f"An error occurred during upscaling: {str(e)}")
 
     def u2net_auto_action(self):
-        if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
-            QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
+        if self.action_in_progress:
             return
+        self.action_in_progress = True
         try:
+            if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
+                QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
+                return
             threshold_value = self.u2net_threshold_spin.value()
-            mask = U2NetProvider.get_salient_mask(self.view.current_cv_image, threshold=threshold_value)
+            img_for_u2net = self.view.current_cv_image
+            if img_for_u2net.shape[2] == 4:
+                img_for_u2net = cv2.cvtColor(img_for_u2net, cv2.COLOR_BGRA2BGR)
+            mask = U2NetProvider.get_salient_mask(img_for_u2net, threshold=threshold_value)
             self.view.u2net_selection_mask = mask
             self.view._update_cv_image_conversions()
             self.view.update_display()
@@ -745,25 +778,23 @@ class MainWindow(QMainWindow):
             print("U2NET resources cleaned up.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
+        finally:
+            self.action_in_progress = False
 
     def apply_action(self):
         saved_callback = self.view.score_update_callback
         self.view.score_update_callback = None
-
         self.view.apply_merge()
-        self.view.detection_cv_image = self.view.current_cv_image.copy()
-
         if self.detection_enabled:
             self.update_detection()
-
-        self.view.score_update_callback = self.update_score
+        self.view.score_update_callback = saved_callback
 
     def set_mode_action(self, mode: str):
         self.view.set_mode(mode)
         self.update_active_button(mode)
         if mode != "object selection" and (SAMModelProvider._model is not None or
-                                    SAMModelProvider._predictor is not None or
-                                    SAMModelProvider._auto_mask_generator is not None):
+                                           SAMModelProvider._predictor is not None or
+                                           SAMModelProvider._auto_mask_generator is not None):
             SAMModelProvider._model = None
             SAMModelProvider._predictor = None
             SAMModelProvider._auto_mask_generator = None
@@ -778,43 +809,48 @@ class MainWindow(QMainWindow):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Lama Inpaint", "No image loaded for inpainting.")
             return
+
         try:
             cv_img = self.view.current_cv_image
-            if len(cv_img.shape) == 3:
-                if cv_img.shape[2] == 3:
-                    rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-                    pil_image = Image.fromarray(rgb_image).convert("RGBA")
-                elif cv_img.shape[2] == 4:
-                    rgba_image = cv2.cvtColor(cv_img, cv2.COLOR_BGRA2RGBA)
-                    pil_image = Image.fromarray(rgba_image)
-                else:
-                    QMessageBox.warning(self, "Lama Inpaint", "Unsupported image format.")
-                    return
+
+            # Convert to PIL RGBA
+            if cv_img.shape[2] == 3:
+                pil_image = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)).convert("RGBA")
+            elif cv_img.shape[2] == 4:
+                pil_image = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGRA2RGBA))
             else:
                 QMessageBox.warning(self, "Lama Inpaint", "Unsupported image format.")
                 return
 
+            # Ensure RGBA
             if pil_image.mode != "RGBA":
-                QMessageBox.warning(self, "Lama Inpaint", "Image does not have an alpha channel. Please provide an image with transparency.")
+                QMessageBox.warning(self, "Lama Inpaint", "Please provide an image with transparency (RGBA).")
                 return
 
+            # Force alpha to match the image size
+            w, h = pil_image.size
             alpha = pil_image.split()[3]
+            if alpha.size != (w, h):
+                alpha = alpha.resize((w, h), Image.Resampling.LANCZOS)
+
+            # Create mask
             mask = ImageOps.invert(alpha.convert("L"))
 
+            # Inpaint
             simple_lama = SimpleLama()
             result = simple_lama(pil_image.convert("RGB"), mask)
 
+            # Update GUI
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.background_pixmap_item.setPixmap(pixmap)
-
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.current_cv_image = result_np
-            self.view.detection_cv_image = self.view.current_cv_image.copy()
-
             self.view._update_cv_image_conversions()
 
             QMessageBox.information(self, "Lama Inpaint", "Lama inpainting completed.")
+            if self.detection_enabled:
+                self.update_detection()
 
         except Exception as e:
             QMessageBox.critical(self, "Lama Inpaint Error", f"An error occurred during inpainting:\n{str(e)}")
@@ -823,7 +859,6 @@ class MainWindow(QMainWindow):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Control Net", "No image loaded for processing.")
             return
-
         cv_img = self.view.current_cv_image
         if len(cv_img.shape) == 3:
             if cv_img.shape[2] == 3:
@@ -838,14 +873,12 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Control Net", "Unsupported image format.")
             return
-
         pil_image_rgba = pil_image.convert("RGBA")
         original_size = pil_image_rgba.size
         alpha = pil_image_rgba.split()[3]
         mask = alpha.point(lambda p: 255 if p < 128 else 0).convert("L")
         pil_image_rgb = pil_image_rgba.convert("RGB")
         adjusted_size = make_divisible_by_8(original_size)
-
         reference_images = []
         for img_path in glob.glob(os.path.join(self.reference_dir, "*.*")):
             try:
@@ -853,12 +886,10 @@ class MainWindow(QMainWindow):
                 reference_images.append(ref_img)
             except Exception as e:
                 print(f"Error loading reference image {img_path}: {e}")
-
         prompt = self.prompt_field.toPlainText().strip()
         if not prompt:
             QMessageBox.warning(self, "Control Net", "Please enter a prompt for inpainting.")
             return
-
         pipe = load_controlnet()
         try:
             result = pipe(
@@ -869,26 +900,21 @@ class MainWindow(QMainWindow):
                 height=adjusted_size[1],
                 width=adjusted_size[0]
             ).images[0]
-
             result = result.resize(original_size, Image.Resampling.LANCZOS)
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.background_pixmap_item.setPixmap(pixmap)
-
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.current_cv_image = result_np
-            self.view.detection_cv_image = self.view.current_cv_image.copy()
-
             QMessageBox.information(self, "Control Net", "Control Net processing completed.")
             del pipe
             torch.cuda.empty_cache()
             print("ControlNet resources cleaned up.")
-
             if self.detection_enabled:
                 self.update_detection()
-
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

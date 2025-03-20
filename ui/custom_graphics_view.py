@@ -60,7 +60,7 @@ class CustomGraphicsView(QGraphicsView):
         self.clone_stamp_overlay = None
         self.clone_source_overlay = None
 
-        self.score_update_callback = None
+        # Removed score_update_callback since real-time update is managed by MainWindow
 
     def apply_contrast_and_sharpen(self, image):
         contrast_image = cv2.convertScaleAbs(image, alpha=1.3, beta=0)
@@ -85,9 +85,7 @@ class CustomGraphicsView(QGraphicsView):
 
         # Update the detection composite whenever conversions update
         self.update_detection_composite()
-
-        if self.score_update_callback is not None:
-            self.score_update_callback()
+        # Removed callback call for score update
 
     def drawBackground(self, painter, rect):
         if self.background_pixmap_item:
