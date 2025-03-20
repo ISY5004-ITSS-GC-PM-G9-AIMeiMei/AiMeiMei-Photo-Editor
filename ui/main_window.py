@@ -532,63 +532,113 @@ class MainWindow(QMainWindow):
         self.prompt_field.setPlainText(self.default_prompt)
 
     def toggle_detection_action(self):
+        """
+        Toggles detection on/off. When turning detection ON, we reinitialize
+        self.view.detection_cv_image from self.view.current_cv_image if needed.
+        """
+        # Optional: Stop timers to avoid concurrency while toggling
+        # self.detection_timer.stop()
+        # self.score_timer.stop()
+
         if self.action_in_progress:
             return
         self.action_in_progress = True
+
         try:
             self.detection_enabled = not self.detection_enabled
+
             if self.detection_enabled:
                 self.detection_toggle_button.setText("Detection: ON")
-                # If detection_cv_image is None, initialize it from current_cv_image
-                if self.view.current_cv_image is not None and self.view.detection_cv_image is None:
+                # If detection_cv_image is None, re-init it from current_cv_image
+                if self.view.detection_cv_image is None and self.view.current_cv_image is not None:
                     self.view.detection_cv_image = self.view.current_cv_image.copy()
+
+                # Immediately run detection once
                 self.update_detection()
+
             else:
                 self.detection_toggle_button.setText("Detection: OFF")
+
+                # Remove any existing overlay
                 if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
                     self.view.scene.removeItem(self.view.detection_overlay_item)
                     self.view.detection_overlay_item = None
+
+                # Clear detection_cv_image so detection won't run
                 self.view.detection_cv_image = None
+
         finally:
             self.action_in_progress = False
 
+        # Optional: Restart timers if you stopped them above
+        # self.detection_timer.start(1000)
+        # self.score_timer.start(100)
+
     def update_detection(self):
-        if not hasattr(self.view, 'background_pixmap_item') or self.view.background_pixmap_item is None:
+        """
+        Updates the detection overlay using self.view.detection_cv_image.
+        Includes safety checks to prevent crashes if data is missing.
+        """
+        # If detection isn't enabled, do nothing
+        if not self.detection_enabled:
             return
+
+        # Make sure detection_cv_image is valid
         if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
+            return
+
+        # Also ensure the background pixmap item exists
+        if not hasattr(self.view, 'background_pixmap_item') or self.view.background_pixmap_item is None:
             return
 
         frame = self.view.detection_cv_image.copy()
         if frame.size == 0:
+            # If frame is empty, skip
             return
 
-        height, width = frame.shape[:2]
+        # If frame has alpha channel, separate it
         has_alpha = (frame.ndim == 3 and frame.shape[2] == 4)
         alpha_channel = frame[:, :, 3] if has_alpha else None
         if has_alpha:
+            # Convert BGRA -> BGR
             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
         try:
+            # Run detection
             objects = detect_objects(frame, alpha_channel)
+
             if not objects:
+                # If no objects, remove overlay if present
                 if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
                     self.view.scene.removeItem(self.view.detection_overlay_item)
                     self.view.detection_overlay_item = None
                 return
 
+            # Group objects & pick focus
             grouped_clusters = group_objects(objects)
             focus_group = select_focus_object(grouped_clusters, frame.shape)
+
+            # Prepare overlay
+            height, width = frame.shape[:2]
             overlay = np.zeros((height, width, 4), dtype=np.uint8)
+
             if focus_group is not None:
+                # Colors
                 blue = (0, 0, 255, 255)
                 red = (255, 0, 0, 255)
                 scale_factor = 0.95
+
+                # Draw bounding boxes
                 for member in focus_group.get("members", []):
                     bx1, by1, bx2, by2 = member["bbox"]
+
+                    # Clamp to valid image coords
                     bx1 = max(0, int(bx1))
                     by1 = max(0, int(by1))
                     bx2 = min(width, int(bx2))
                     by2 = min(height, int(by2))
+
+                    # Scale the box slightly
                     box_width = bx2 - bx1
                     box_height = by2 - by1
                     new_width = int(box_width * scale_factor)
@@ -599,12 +649,18 @@ class MainWindow(QMainWindow):
                     new_by1 = center_y - new_height // 2
                     new_bx2 = new_bx1 + new_width
                     new_by2 = new_by1 + new_height
+
+                    # Draw box
                     cv2.rectangle(overlay, (new_bx1, new_by1), (new_bx2, new_by2), blue, thickness=2)
+
+                    # Label
                     label = member.get("label", "object")
                     confidence = member.get("confidence", 0)
                     debug_text = f"{label} {confidence:.2f}"
                     cv2.putText(overlay, debug_text, (new_bx1, new_by1 - 5),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, blue, 1, cv2.LINE_AA)
+
+                # Outer bounding box
                 x1, y1, x2, y2 = focus_group["bbox"]
                 x1 = max(0, int(x1))
                 y1 = max(0, int(y1))
@@ -612,17 +668,24 @@ class MainWindow(QMainWindow):
                 y2 = min(height, int(y2))
                 cv2.rectangle(overlay, (x1, y1), (x2, y2), red, thickness=3)
 
+            # Convert overlay to QPixmap
             q_image = QImage(overlay.data, width, height, width * 4, QImage.Format.Format_RGBA8888)
             overlay_pixmap = QPixmap.fromImage(q_image)
+
+            # If we already have an overlay item, update it
             if hasattr(self.view, 'detection_overlay_item') and self.view.detection_overlay_item is not None:
                 self.view.detection_overlay_item.setPixmap(overlay_pixmap)
             else:
+                # Otherwise, create a new overlay item
                 self.view.detection_overlay_item = QGraphicsPixmapItem(overlay_pixmap)
                 self.view.detection_overlay_item.setZValue(20)
                 self.view.detection_overlay_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
                 self.view.scene.addItem(self.view.detection_overlay_item)
+
+            # Position overlay
             if hasattr(self.view, 'background_pixmap_item') and self.view.background_pixmap_item is not None:
                 self.view.detection_overlay_item.setPos(self.view.background_pixmap_item.pos())
+
         except Exception as e:
             QMessageBox.critical(self, "Detection Error", f"An error occurred during detection:\n{str(e)}")
 
@@ -809,7 +872,6 @@ class MainWindow(QMainWindow):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Lama Inpaint", "No image loaded for inpainting.")
             return
-
         try:
             cv_img = self.view.current_cv_image
 
@@ -822,25 +884,32 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Lama Inpaint", "Unsupported image format.")
                 return
 
-            # Ensure RGBA
+            # Ensure we have RGBA
             if pil_image.mode != "RGBA":
                 QMessageBox.warning(self, "Lama Inpaint", "Please provide an image with transparency (RGBA).")
                 return
 
-            # Force alpha to match the image size
+            # ============== DEBUG PRINT ==============
+            print("PIL RGBA size:", pil_image.size)  # e.g. (854, 1280)
+
+            # Extract alpha
+            alpha = pil_image.split()[3]  # alpha channel
             w, h = pil_image.size
-            alpha = pil_image.split()[3]
+
+            # If alpha is the wrong size, resize it
             if alpha.size != (w, h):
+                print("Resizing alpha from", alpha.size, "to", (w, h))
                 alpha = alpha.resize((w, h), Image.Resampling.LANCZOS)
 
-            # Create mask
+            # Convert alpha to mask
             mask = ImageOps.invert(alpha.convert("L"))
+            print("Mask size:", mask.size)
 
             # Inpaint
             simple_lama = SimpleLama()
             result = simple_lama(pil_image.convert("RGB"), mask)
 
-            # Update GUI
+            # Show result
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.background_pixmap_item.setPixmap(pixmap)
@@ -849,6 +918,7 @@ class MainWindow(QMainWindow):
             self.view._update_cv_image_conversions()
 
             QMessageBox.information(self, "Lama Inpaint", "Lama inpainting completed.")
+
             if self.detection_enabled:
                 self.update_detection()
 
