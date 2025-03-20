@@ -471,6 +471,7 @@ class MainWindow(QMainWindow):
         file_dialog = QFileDialog()
         image_file, _ = file_dialog.getOpenFileName(self, "Open Image", "", "Image Files (*.png *.jpg *.bmp)")
         if image_file:
+            self.undo_stack.clear()
             self.view.load_image(image_file)
             self.current_file = image_file
             self.filter_panel.refresh_thumbnails()
