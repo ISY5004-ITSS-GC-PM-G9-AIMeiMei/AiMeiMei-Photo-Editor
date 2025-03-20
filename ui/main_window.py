@@ -64,7 +64,6 @@ class MainWindow(QMainWindow):
     def init_top_section(self, parent_layout):
         top_widget = QWidget()
         top_layout = QHBoxLayout(top_widget)
-        # Store the score label as an instance variable:
         self.score_label = QLabel("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
         self.score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         top_layout.addWidget(self.score_label)
@@ -100,7 +99,6 @@ class MainWindow(QMainWindow):
         parent_layout.addWidget(bottom_widget, 15)
 
     def init_left_buttons(self, layout):
-        # --- Create a container for the buttons ---
         button_container = QWidget()
         button_layout = QVBoxLayout(button_container)
         button_layout.setContentsMargins(0, 0, 0, 0)
@@ -116,7 +114,6 @@ class MainWindow(QMainWindow):
         enhance_lighting_button.clicked.connect(self.enhance_lighting_action)
         button_layout.addWidget(enhance_lighting_button)
 
-        # In your init_left_buttons() method, after adding the configuration widget:
         apply_filter_button = QPushButton("Apply Filter")
         apply_filter_button.setCursor(Qt.CursorShape.PointingHandCursor)
         apply_filter_button.clicked.connect(self.apply_filter_action)
@@ -132,7 +129,6 @@ class MainWindow(QMainWindow):
         upscale_button.clicked.connect(self.upscale_image_action)
         button_layout.addWidget(upscale_button)
 
-        # --- Mode Buttons ---
         mode_map = {
             "Transform": "transform",
             "Clone Stamp": "clone stamp",
@@ -166,23 +162,18 @@ class MainWindow(QMainWindow):
         deselect_button.clicked.connect(self.apply_action)
         button_layout.addWidget(deselect_button)
 
-        # --- Build the configuration widget (scrollable) ---
         config_widget = self.build_config_settings_widget()
-
-        # --- Add both containers to the left panel layout with stretch factors ---
         layout.addWidget(button_container, 5)
         layout.addWidget(config_widget, 5)
 
     def build_config_settings_widget(self):
-        # Create the configuration group with all the settings
         config_group = QGroupBox("Configuration Settings")
         config_layout = QVBoxLayout(config_group)
 
-        # --- Lighting Adjustments Group ---
+        # Lighting Adjustments Group
         lighting_group = QGroupBox("Lighting Adjustments")
         lighting_layout = QVBoxLayout(lighting_group)
 
-        # Brightness control: slider and spin box
         brightness_layout = QHBoxLayout()
         brightness_label = QLabel("Brightness Factor:")
         self.lighting_brightness_slider = QSlider(Qt.Orientation.Horizontal)
@@ -199,7 +190,6 @@ class MainWindow(QMainWindow):
         brightness_layout.addWidget(self.lighting_brightness_spin)
         lighting_layout.addLayout(brightness_layout)
 
-        # Contrast control: slider and spin box
         contrast_layout = QHBoxLayout()
         contrast_label = QLabel("Contrast Factor:")
         self.lighting_contrast_slider = QSlider(Qt.Orientation.Horizontal)
@@ -216,7 +206,6 @@ class MainWindow(QMainWindow):
         contrast_layout.addWidget(self.lighting_contrast_spin)
         lighting_layout.addLayout(contrast_layout)
 
-        # Gamma control: slider and spin box
         gamma_layout = QHBoxLayout()
         gamma_label = QLabel("Gamma Correction:")
         self.lighting_gamma_slider = QSlider(Qt.Orientation.Horizontal)
@@ -235,10 +224,9 @@ class MainWindow(QMainWindow):
 
         config_layout.addWidget(lighting_group)
 
-        # --- Sharpening Adjustments Group ---
+        # Sharpening Adjustments Group
         sharpen_group = QGroupBox("Sharpening Adjustments")
         sharpen_layout = QVBoxLayout(sharpen_group)
-
         sharpen_control_layout = QHBoxLayout()
         sharpen_label = QLabel("Sharpening Amount:")
         self.sharpen_slider = QSlider(Qt.Orientation.Horizontal)
@@ -254,10 +242,9 @@ class MainWindow(QMainWindow):
         sharpen_control_layout.addWidget(self.sharpen_slider)
         sharpen_control_layout.addWidget(self.sharpen_spin)
         sharpen_layout.addLayout(sharpen_control_layout)
-
         config_layout.addWidget(sharpen_group)
 
-        # --- Quick Selection Configuration ---
+        # Quick Selection Configuration
         quick_selection_group = QGroupBox("Quick Selection Configuration")
         quick_selection_layout = QVBoxLayout(quick_selection_group)
         brush_size_label = QLabel("Brush Size:")
@@ -270,7 +257,7 @@ class MainWindow(QMainWindow):
         quick_selection_layout.addWidget(self.quick_select_brush_spin)
         config_layout.addWidget(quick_selection_group)
 
-        # --- SAM Configuration ---
+        # SAM Configuration
         sam_config_group = QGroupBox("Object Selection (SAM) Configuration")
         sam_layout = QVBoxLayout(sam_config_group)
         sam_points_label = QLabel("SAM Points Per Side:")
@@ -292,14 +279,13 @@ class MainWindow(QMainWindow):
         config_layout.addWidget(sam_config_group)
         sam_config_group.setLayout(sam_layout)
 
-        # --- U2Net Configuration ---
+        # U2Net Configuration
         u2net_config_group = QGroupBox("Salient Object Selection (U2Net) Configuration")
         u2net_layout = QVBoxLayout(u2net_config_group)
         u2net_threshold_label = QLabel("U2Net Threshold:")
         self.u2net_threshold_spin = QDoubleSpinBox()
         self.u2net_threshold_spin.setRange(0.0, 1.0)
         self.u2net_threshold_spin.setSingleStep(0.01)
-        # Updated default value to 0.3 for improved segmentation quality.
         self.u2net_threshold_spin.setValue(0.3)
         self.u2net_threshold_spin.valueChanged.connect(self.on_u2net_threshold_changed)
         u2net_layout.addWidget(u2net_threshold_label)
@@ -358,7 +344,7 @@ class MainWindow(QMainWindow):
         config_layout.addWidget(u2net_config_group)
         u2net_config_group.setLayout(u2net_layout)
 
-        # --- Clone Stamp Configuration ---
+        # Clone Stamp Configuration
         clone_stamp_group = QGroupBox("Clone Stamp Configuration")
         clone_stamp_layout = QVBoxLayout(clone_stamp_group)
         clone_brush_label = QLabel("Clone Stamp Brush Size:")
@@ -371,7 +357,6 @@ class MainWindow(QMainWindow):
         clone_stamp_layout.addWidget(self.clone_stamp_brush_spin)
         config_layout.addWidget(clone_stamp_group)
 
-        # --- Wrap the configuration group in a scroll area ---
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(config_group)
@@ -615,8 +600,7 @@ class MainWindow(QMainWindow):
     def update_score(self):
         try:
             if self.view.current_cv_image is None or len(self.view.current_cv_image.shape) < 3:
-                self.score_label.setText(
-                    "Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
+                self.score_label.setText("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
                 return
 
             frame = self.view.current_cv_image
@@ -641,7 +625,6 @@ class MainWindow(QMainWindow):
             self.score_label.setText("Aesthetic Score: N/A | Position: N/A | Angle: N/A | Lighting: N/A | Focus: N/A")
 
     def updateLightingPreview(self):
-        # Ensure a base image exists
         if not hasattr(self.view, 'detection_cv_image') or self.view.detection_cv_image is None:
             return
 
@@ -649,22 +632,17 @@ class MainWindow(QMainWindow):
         contrast = self.lighting_contrast_slider.value() / 100.0
         gamma = self.lighting_gamma_slider.value() / 100.0
 
-        # Start with the unmodified base image and compute the preview
         image = self.view.detection_cv_image.astype(np.float32) / 255.0
-        # Apply gamma correction
         image = np.power(image, 1.0 / gamma)
-        # Scale brightness and contrast
         image = np.clip(image * contrast * brightness, 0, 1)
         preview = (image * 255).astype(np.uint8)
 
-        # Update the current working image (preview only)
         self.view.current_cv_image = preview
         self.view._update_cv_image_conversions()
 
-        # Update the QPixmap to show preview
-        h, w, ch = self.view.cv_image_rgba.shape
+        h, w, ch = self.view.display_cv_image.shape
         bytes_per_line = ch * w
-        qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+        qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         pixmap = QPixmap.fromImage(qimage)
         self.view.background_pixmap_item.setPixmap(pixmap)
 
@@ -681,9 +659,9 @@ class MainWindow(QMainWindow):
         self.view.current_cv_image = sharpened
         self.view._update_cv_image_conversions()
 
-        h, w, ch = self.view.cv_image_rgba.shape
+        h, w, ch = self.view.display_cv_image.shape
         bytes_per_line = ch * w
-        qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+        qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
         pixmap = QPixmap.fromImage(qimage)
         self.view.background_pixmap_item.setPixmap(pixmap)
 
@@ -691,7 +669,6 @@ class MainWindow(QMainWindow):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Enhance Lighting", "No image loaded for enhancement.")
             return
-        # Commit the preview effect by updating the base image.
         self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Enhance Lighting", "Lighting enhancement applied.")
 
@@ -699,7 +676,6 @@ class MainWindow(QMainWindow):
         if not hasattr(self.view, 'current_cv_image') or self.view.current_cv_image is None:
             QMessageBox.warning(self, "Apply Filter", "No filter preview available.")
             return
-        # Commit the preview effect by updating the base image permanently.
         self.view.detection_cv_image = self.view.current_cv_image.copy()
         QMessageBox.information(self, "Apply Filter", "Filter applied.")
 
@@ -739,9 +715,9 @@ class MainWindow(QMainWindow):
             self.view.detection_cv_image = upscaled_image.copy()
             self.view._update_cv_image_conversions()
 
-            h, w, ch = self.view.cv_image_rgba.shape
+            h, w, ch = self.view.display_cv_image.shape
             bytes_per_line = ch * w
-            qimage = QImage(self.view.cv_image_rgba.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
+            qimage = QImage(self.view.display_cv_image.data, w, h, bytes_per_line, QImage.Format.Format_RGBA8888)
             pixmap = QPixmap.fromImage(qimage)
             self.view.background_pixmap_item.setPixmap(pixmap)
             self.view.setSceneRect(self.view.background_pixmap_item.boundingRect())
@@ -759,11 +735,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Auto Salient Object", "No image loaded.")
             return
         try:
-            # Using the U2Net threshold value from the configuration (default now 0.3)
             threshold_value = self.u2net_threshold_spin.value()
             mask = U2NetProvider.get_salient_mask(self.view.current_cv_image, threshold=threshold_value)
             self.view.u2net_selection_mask = mask
-            self.view.update_u2net_selection_display()
+            # Ensure the RGBA conversion is updated before using it.
+            self.view._update_cv_image_conversions()
+            self.view.update_display()
             QMessageBox.information(self, "Auto Salient Object", "Salient object segmentation completed.")
             U2NetProvider._session = None
             torch.cuda.empty_cache()
@@ -772,7 +749,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
 
     def apply_action(self):
-        # Temporarily disable the score callback to avoid it firing during merge
         saved_callback = self.view.score_update_callback
         self.view.score_update_callback = None
 
@@ -782,7 +758,6 @@ class MainWindow(QMainWindow):
         if self.detection_enabled:
             self.update_detection()
 
-        # Re-enable the callback after merge is complete
         self.view.score_update_callback = self.update_score
 
     def set_mode_action(self, mode: str):
@@ -834,7 +809,6 @@ class MainWindow(QMainWindow):
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.background_pixmap_item.setPixmap(pixmap)
-            self.view.current_background_pixmap = pixmap
 
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.current_cv_image = result_np
@@ -902,7 +876,6 @@ class MainWindow(QMainWindow):
             qimage = ImageQt(result)
             pixmap = QPixmap.fromImage(qimage)
             self.view.background_pixmap_item.setPixmap(pixmap)
-            self.view.current_background_pixmap = pixmap
 
             result_np = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
             self.view.current_cv_image = result_np
@@ -919,8 +892,4 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+
