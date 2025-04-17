@@ -118,6 +118,7 @@ class SPAQQualityAssessor:
         # Average the first 5 channels over all patches.
         # Assumed order: 0: Brightness, 1: Colorfulness, 2: Contrast, 3: Noisiness, 4: Sharpness.
         attr_scores = outputs[:, :5].mean(dim=0).cpu().numpy().tolist()
+        attr_scores = [round(s * 0.1, 2) for s in attr_scores]
         return {
             "Brightness": attr_scores[0],
             "Colorfulness": attr_scores[1],
@@ -136,81 +137,62 @@ except Exception as e:
     print("Error initializing SPAQ Quality Assessor:", e)
     spaq_assessor = None
 
+
 ##############################################
-# Legacy Composition Functions (Position & Angle)
+# Composition & Scene Evaluation Functions
 ##############################################
 
-def calculate_position_score(focus_object, w, h, lines):
+def calculate_position_score(focus_object, w, h):
     """
-    Calculate position score based on how close the subject's center is to ideal rule-of-thirds intersections.
+    Calculate position score based on how close the subject's center is
+    to ideal rule-of-thirds intersections.
+    Returns a float rounded to 2 decimal places.
     """
     if not focus_object:
-        return 5
+        return 5.0
 
     x1, y1, x2, y2 = focus_object["bbox"]
     object_x, object_y = (x1 + x2) // 2, (y1 + y2) // 2
 
-    # Ideal rule-of-thirds intersections (4 points)
     thirds_x = [w // 3, 2 * w // 3]
     thirds_y = [h // 3, 2 * h // 3]
     intersections = [(tx, ty) for tx in thirds_x for ty in thirds_y]
 
-    distances = [np.sqrt((object_x - ix) ** 2 + (object_y - iy) ** 2) for (ix, iy) in intersections]
+    distances = [np.sqrt((object_x - ix) ** 2 + (object_y - iy) ** 2) for ix, iy in intersections]
     min_distance = min(distances)
     max_possible = np.sqrt((w / 3) ** 2 + (h / 3) ** 2)
     pos_ratio = min_distance / max_possible
-    position_score = round(10 - pos_ratio * 5, 2)
 
-    # Penalize if subject occupies too much of the frame
+    score = round(10 - pos_ratio * 5, 2)
     subject_area = (x2 - x1) * (y2 - y1)
     frame_area = w * h
     if subject_area / frame_area > 0.5:
-        position_score = max(3, position_score - 3)
+        score -= 3
+    score = max(0.0, score)
+    return round(score, 2)
 
-    return position_score
 
 def calculate_angle_score(gray):
     """
     Calculate an angle score based on the median deviation from 90°.
-    Uses only lines with angles in [70°, 110°] to reduce outlier effects.
+    Returns a float rounded to 2 decimal places.
     """
     edges = cv2.Canny(gray, 50, 150)
-    lines = cv2.HoughLines(edges, 1, np.pi/180, 100)
+    lines = cv2.HoughLines(edges, 1, np.pi / 180, 100)
     if lines is None:
-        return 5
+        return 5.0
     angles = [abs(np.degrees(theta)) for rho, theta in lines[:, 0]]
-    valid_angles = [a for a in angles if 70 <= a <= 110]
-    if not valid_angles:
-        return 5
-    median_angle = np.median(valid_angles)
-    angle_deviation = abs(median_angle - 90)
-    angle_score = round(max(1, 10 - (angle_deviation / 6)), 2)
-    return angle_score
+    valid = [a for a in angles if 70 <= a <= 110]
+    if not valid:
+        return 5.0
+    median_angle = np.median(valid)
+    deviation = abs(median_angle - 90)
+    score = round(max(1, 10 - (deviation / 6)), 2)
+    return score
 
 
 def calculate_photo_score(frame, objects):
-    """
-    Evaluate the overall photo score by merging:
-      - SPAQ attribute scores:
-            • Brightness
-            • Colorfulness
-            • Contrast
-            • Noisiness
-            • Sharpness
-      - Legacy Position score (subject placement) and Angle score (camera tilt)
-        only if objects are detected.
 
-    'frame' is an OpenCV image (BGR or BGRA) and 'objects' is a list of detected objects.
-
-    If objects is empty, the function only calculates the SPAQ attributes and sets the
-    final score equal to the SPAQ composite score.
-
-    Returns a dictionary with the following keys:
-       - "Final Score"
-       - "Brightness", "Colorfulness", "Contrast", "Noisiness", "Sharpness"
-       - "Position" and "Angle" (only present if objects are detected)
-       - "Feedback" and "Suggestions"
-    """
     # Get image dimensions and grayscale version.
     h, w, _ = frame.shape
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -222,7 +204,6 @@ def calculate_photo_score(frame, objects):
         frame_cv = frame
     pil_img = Image.fromarray(cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB))
 
-    # Obtain SPAQ attribute scores.
     if spaq_assessor is None:
         spaq_data = {
             "Brightness": 5,
@@ -247,15 +228,12 @@ def calculate_photo_score(frame, objects):
             }
             spa_feedback = ["Error assessing image quality."]
 
-    # For "Noisiness", lower values are better; invert it on a 1-10 scale.
-    noisiness_effective = 10 - spaq_data["Noisiness"]
-
-    # Compute the SPAQ composite quality score as an average of the five attributes,
-    # using the inverted noisiness score.
+        # Compute the SPAQ composite quality score as an average of the five attributes,
+        # using the inverted noisiness score.
     spaq_composite = (spaq_data["Brightness"] +
                       spaq_data["Colorfulness"] +
                       spaq_data["Contrast"] +
-                      noisiness_effective +
+                      spaq_data["Noisiness"] +
                       spaq_data["Sharpness"]) / 5.0
 
     feedback = list(spa_feedback)
@@ -271,71 +249,60 @@ def calculate_photo_score(frame, objects):
     if spaq_data["Contrast"] < 5:
         feedback.append("Image contrast is low.")
         suggestions.append("Increase contrast for more definition.")
-    if spaq_data["Noisiness"] > 5:  # higher noisiness is worse
+    if spaq_data["Noisiness"] < 5:  # higher noisiness is worse
         feedback.append("Image is noisy.")
         suggestions.append("Apply noise reduction or use better lighting.")
     if spaq_data["Sharpness"] < 5:
         feedback.append("Image appears blurry.")
         suggestions.append("Use a tripod or improve focus.")
 
+    angle_score = calculate_angle_score(gray)
+
+    if angle_score < 5:
+        feedback.append("Camera tilt detected.")
+        suggestions.append("Reposition camera to reduce tilt.")
+
+    position_score = 5
     if objects:
-        # Compute legacy metrics only when objects are detected.
-
         focus_object = max(objects, key=lambda obj: obj["confidence"], default=None)
-        print("!!!!!!!!!")
-        position_score = calculate_position_score(focus_object, w, h, None)
-        print("!!!!!!!!!")
-        angle_score = calculate_angle_score(gray)
-        print("!!!!!!!!!")
+        if focus_object:
+            position_score = calculate_position_score(focus_object, w, h, None)
+            if position_score < 5:
+                feedback.append("Subject placement could improve.")
+                if focus_object:
+                    x1, y1, x2, y2 = focus_object["bbox"]
+                    object_x, object_y = (x1 + x2) // 2, (y1 + y2) // 2
+                    if object_x < w // 3:
+                        suggestions.append("Move subject to the right.")
+                    elif object_x > 2 * w // 3:
+                        suggestions.append("Move subject to the left.")
+                    if object_y < h // 3:
+                        suggestions.append("Move subject downward.")
+                    elif object_y > 2 * h // 3:
+                        suggestions.append("Move subject upward.")
 
-        # Define weights for composite final score.
-        WEIGHT_SPAQ = 0.55
-        WEIGHT_POSITION = 0.25
-        WEIGHT_ANGLE = 0.20
+    # Define weights for composite final score.
+    WEIGHT_SPAQ = 0.55
+    WEIGHT_POSITION = 0.25
+    WEIGHT_ANGLE = 0.20
 
-        final_score = round(
-            spaq_composite * WEIGHT_SPAQ +
-            position_score * WEIGHT_POSITION +
-            angle_score * WEIGHT_ANGLE, 2
-        )
-
-        # Position-based feedback.
-        if position_score < 5:
-            feedback.append("Subject placement could improve.")
-            if focus_object:
-                x1, y1, x2, y2 = focus_object["bbox"]
-                object_x, object_y = (x1 + x2) // 2, (y1 + y2) // 2
-                if object_x < w // 3:
-                    suggestions.append("Move subject to the right.")
-                elif object_x > 2 * w // 3:
-                    suggestions.append("Move subject to the left.")
-                if object_y < h // 3:
-                    suggestions.append("Move subject downward.")
-                elif object_y > 2 * h // 3:
-                    suggestions.append("Move subject upward.")
-        if angle_score < 5:
-            feedback.append("Camera tilt detected.")
-            suggestions.append("Reposition camera to reduce tilt.")
-
-    else:
-        # If no objects detected, compute final score solely based on SPAQ composite.
-        final_score = round(spaq_composite, 2)
-
-        feedback.append("No subject detected; quality is based solely on global image attributes.")
-        suggestions.append("Ensure your main subject is well-framed to improve composition.")
+    final_score = round(
+        spaq_composite * WEIGHT_SPAQ +
+        position_score * WEIGHT_POSITION +
+        angle_score * WEIGHT_ANGLE, 2
+    )
 
     result = {
         "Final Score": final_score,
+        "Position": position_score,
+        "Angle": angle_score,
         "Brightness": spaq_data["Brightness"],
+        "Sharpness": spaq_data["Sharpness"],
         "Colorfulness": spaq_data["Colorfulness"],
         "Contrast": spaq_data["Contrast"],
         "Noisiness": spaq_data["Noisiness"],
-        "Sharpness": spaq_data["Sharpness"],
         "Feedback": feedback,
         "Suggestions": suggestions
     }
-    if objects:
-        result["Position"] = position_score
-        result["Angle"] = angle_score
 
     return result
