@@ -50,10 +50,10 @@ class MainWindow(QMainWindow):
         # Separate timers:
         self.detection_timer = QTimer(self)
         self.detection_timer.timeout.connect(self.safe_update_detection)
-        self.detection_timer.start(30000)  # every 30 second
+        self.detection_timer.start(5000)  # every 5 second
         self.score_timer = QTimer(self)
         self.score_timer.timeout.connect(self.safe_update_score)
-        self.score_timer.start(30000)  # every 30 second
+        self.score_timer.start(5000)  # every 5 second
 
     def initUI(self):
         self.setWindowTitle("Image Editor")
@@ -741,7 +741,14 @@ class MainWindow(QMainWindow):
                 self.score_label.setText(text)
                 return
 
-            score_data = calculate_photo_score(frame, [])
+            # If frame has alpha channel, separate it
+            has_alpha = (frame.ndim == 3 and frame.shape[2] == 4)
+            alpha_channel = frame[:, :, 3] if has_alpha else None
+            if has_alpha:
+                # Convert BGRA -> BGR
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            objects = detect_objects(frame, alpha_channel)
+            score_data = calculate_photo_score(frame, objects)
             text = (
                 f"Final Score: {score_data['Final Score']:.2f} | Position: {score_data['Position']:.2f} | Angle: {score_data['Angle']:.2f} | Sharpness: {score_data['Sharpness']:.2f}\n"
                 f"Brightness: {score_data['Brightness']:.2f} | Colorfulness: {score_data['Colorfulness']:.2f} | Contrast: {score_data['Contrast']:.2f} | Noisiness: {score_data['Noisiness']:.2f}\n"
