@@ -90,7 +90,7 @@ class ImageLoad(object):
 ##############################################
 
 class SPAQQualityAssessor:
-    def __init__(self, model_path="models/MT-A_release.pt", patch_size=512, stride=224):
+    def __init__(self, model_path="/media/labpc2x2080ti/data/Mohan_Workspace/AiMeiMei-Photo-Editor/models/MT-A_release.pt", patch_size=512, stride=224):
         self.model = MTA()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
@@ -132,7 +132,7 @@ class SPAQQualityAssessor:
 # Global SPAQ Assessor Instance
 ##############################################
 try:
-    spaq_assessor = SPAQQualityAssessor(model_path="models/MT-A_release.pt")
+    spaq_assessor = SPAQQualityAssessor(model_path="/media/labpc2x2080ti/data/Mohan_Workspace/AiMeiMei-Photo-Editor/models/MT-A_release.pt")
 except Exception as e:
     print("Error initializing SPAQ Quality Assessor:", e)
     spaq_assessor = None

@@ -31,7 +31,7 @@ from providers.realesrgan_provider import RealESRGANProvider
 from providers.sam_model_provider import SAMModelProvider
 from providers.u2net_provider import U2NetProvider
 from providers.score_provider import calculate_photo_score
-
+from providers.Aethestic_score_provider import AestheticScorer
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -72,19 +72,27 @@ class MainWindow(QMainWindow):
 
     def init_top_section(self, parent_layout):
         top_widget = QWidget()
-        top_layout = QHBoxLayout(top_widget)
+        top_layout = QVBoxLayout(top_widget)
 
-        # Create the QLabel first
+        
         self.score_label = QLabel()
-
-        # Set the initial text
-        text = (
+        self.score_label.setText(
             "Final Score: N/A | Position: N/A | Angle: N/A | Sharpness: N/A\n"
             "Brightness: N/A | Colorfulness: N/A | Contrast: N/A | Noisiness: N/A\n"
         )
-        self.score_label.setText(text)
         self.score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
+       
+        self.aesthetic_score_label = QLabel()
+        self.aesthetic_score_label.setText("Aesthetic Score: N/A")
+        self.aesthetic_score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        font = self.aesthetic_score_label.font()
+        font.setPointSize(12)
+        font.setBold(True)
+        self.aesthetic_score_label.setFont(font)
+
+        
+        top_layout.addWidget(self.aesthetic_score_label)
         top_layout.addWidget(self.score_label)
         parent_layout.addWidget(top_widget, 5)
 
@@ -168,6 +176,11 @@ class MainWindow(QMainWindow):
         controlnet_generate_button.clicked.connect(self.control_net_action)
         button_layout.addWidget(controlnet_generate_button)
 
+        # Add a button to evaluate the athestic score
+        score_button = QPushButton("Evaluate Aesthetic Score")
+        score_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        score_button.clicked.connect(self.evaluate_aesthetic_score)
+        button_layout.addWidget(score_button)
 
         layout.addWidget(button_container, 5)
         # Add configuration panel next to buttons
@@ -388,12 +401,11 @@ class MainWindow(QMainWindow):
         print(f"U2Net config updated: target_size=({target_width}, {target_height}), bilateral_d={bilateral_d}, sigmaColor={sigmaColor}, sigmaSpace={sigmaSpace}, gaussian_kernel_size={gaussian_kernel_size}")
 
     def on_sam_config_changed(self, value):
-        SAMModelProvider.set_auto_mask_generator_config(
-            points_per_side=self.sam_points_spin.value(),
-            pred_iou_thresh=self.sam_iou_spin.value()
-        )
+        self.mask_temp= SAMModelProvider.get_largest_mask_image()
+        
         print("SAM configuration updated: auto mask generator reset.")
-
+        
+    
     def on_quick_select_brush_size_changed(self, value):
         self.view.quick_select_brush_size = value
         print(f"Quick selection brush size updated to: {value}")
@@ -903,10 +915,12 @@ class MainWindow(QMainWindow):
         self.update_active_button(mode)
         if mode != "object selection" and (SAMModelProvider._model is not None or
                                            SAMModelProvider._predictor is not None or
+                                           SAMModelProvider._mask_pil is not None or
                                            SAMModelProvider._auto_mask_generator is not None):
             SAMModelProvider._model = None
             SAMModelProvider._predictor = None
             SAMModelProvider._auto_mask_generator = None
+            SAMModelProvider._mask_pil= None
             torch.cuda.empty_cache()
             print("SAM resources cleaned up.")
 
@@ -1002,7 +1016,7 @@ class MainWindow(QMainWindow):
         pil_image_rgba = pil_image.convert("RGBA")
         original_size = pil_image_rgba.size
         alpha = pil_image_rgba.split()[3]
-        mask = alpha.point(lambda p: 255 if p < 128 else 0).convert("L")
+        mask = self.view.mask_temp
         pil_image_rgb = pil_image_rgba.convert("RGB")
         adjusted_size = make_divisible_by_8(original_size)
         reference_images = []
@@ -1044,6 +1058,25 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Control Net Error", f"An error occurred: {str(e)}")
         self.action_in_progress = False
+
+    def evaluate_aesthetic_score(self):
+        print(self.view.image_path)
+        if not hasattr(self.view, 'image_path'):
+            QMessageBox.warning(self, "Aesthetic Score", "No image file path found.")
+            return None
+
+        scorer = AestheticScorer(
+            checkpoint_path="/media/labpc2x2080ti/data/Mohan_Workspace/AiMeiMei-Photo-Editor/providers/AIMeiMei_FID/model/epoch100.pth",
+            gpu_id=0
+        )
+
+        try:
+            score = scorer.predict(self.view.image_path)
+            self.aesthetic_score_label.setText(f"Aesthetic Score: {score:.4f}")
+            return score
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to evaluate score:\n{str(e)}")
+            return None
 
 
 if __name__ == "__main__":

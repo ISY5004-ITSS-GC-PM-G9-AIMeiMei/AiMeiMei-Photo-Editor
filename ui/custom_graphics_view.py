@@ -389,6 +389,10 @@ class CustomGraphicsView(QGraphicsView):
 
         # Instead of alpha compositing, we flatten the entire scene below
         self.update_detection_composite()
+        if self.selection_mask is not None:
+            contours, _ = cv2.findContours(self.selection_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            overlay = np.zeros_like(self.selection_mask)
+            cv2.drawContours(overlay, contours, -1, (0, 0, 255), 2)
 
     def _get_outline_path(self, binary_mask):
         kernel = np.ones((3, 3), np.uint8)
@@ -636,7 +640,8 @@ class CustomGraphicsView(QGraphicsView):
 
         if self.undo_callback is not None:
             self.undo_callback()
-
+        from PIL import Image
+        self.mask_temp = Image.fromarray(self.selection_mask).convert("L")
     # ---------------------------------------------------------
     #  Quick Selection & Clone Stamp
     # ---------------------------------------------------------
